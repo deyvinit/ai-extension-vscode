@@ -105,9 +105,20 @@ class AIAssistantViewProvider {
             padding: 6px 10px;
             cursor: pointer;
           }
-          #response {
+          #chat {
             margin-top: 12px;
-            white-space: pre-wrap;
+          }
+          .message {
+            margin-bottom: 8px;
+            padding: 6px 8px;
+            border-radius: 4px;
+          }
+          .message.user {
+            background-color: #e0f0ff;
+            font-weight: 500;
+          }
+          .message.assistant {
+            background-color: #f4f4f4;
           }
         </style>
       </head>
@@ -115,25 +126,41 @@ class AIAssistantViewProvider {
         <h2>AI Assistant</h2>
         <textarea id="prompt" placeholder="Ask something..."></textarea>
         <button id="send">Send</button>
-        <div id="response"></div>
+        <div id="chat"></div>
 
         <script>
           const vscode = acquireVsCodeApi();
 
           document.getElementById('send').addEventListener('click', () => {
-            const text = document.getElementById('prompt').value;
+            const input = document.getElementById('prompt');
+            const text = input.value.trim();
+
+            if (!text) return;
+
+            addMessage('user', text);
 
             vscode.postMessage({
               type: 'userPrompt',
               text
             });
+
+            input.value = '';
           });
+
+          const chat = document.getElementById('chat');
+
+          function addMessage(role, text) {
+            const div = document.createElement('div');
+            div.className = 'message ' + role;
+            div.innerText = (role === 'user' ? 'You' : 'AI') + ': ' + text;
+            chat.appendChild(div);
+          }
 
           window.addEventListener('message', (event) => {
             const message = event.data;
 
             if (message.type === 'assistantResponse') {
-              document.getElementById('response').innerText = message.text;
+              addMessage('assistant', message.text);
             }
           });
         </script>
