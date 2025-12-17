@@ -60,6 +60,17 @@ These values were selected based on the official Gemini API documentation.
 
 ---
 
+## Conversation UI Rendering
+
+Initially, each new AI response replaced the previous content in the sidebar.
+This was changed to a chat-style rendering approach where user prompts and AI
+responses are appended as separate, role-labeled messages.
+
+This ensures conversation history remains visible while keeping rendering
+logic separate from backend AI state management.
+
+---
+
 ## Key Learnings
 
 - Correct API versioning is critical for model availability
