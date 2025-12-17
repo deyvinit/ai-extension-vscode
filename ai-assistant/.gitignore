@@ -1,3 +1,5 @@
 node_modules/
 .vscode-test/
 out/
+.vscode/launch.json
+.DS_Store

@@ -10,7 +10,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onView: aiAssistant.sidebar"
+  "*"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -27,7 +27,8 @@
       "aiAssistant": [
         {
           "id": "aiAssistant.sidebar",
-          "name": "AI Assistant"
+          "name": "AI Assistant",
+          "type": "webview"
         }
       ]
     },
