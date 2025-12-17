@@ -13,6 +13,17 @@ class AIAssistantViewProvider {
     };
 
     webviewView.webview.html = this.getHtml();
+
+	webviewView.webview.onDidReceiveMessage((message) => {
+		if (message.type === 'userPrompt') {
+			const mockResponse = `You asked: ${message.text}`;
+
+			webviewView.webview.postMessage({
+				type: 'assistantResponse',
+				text: mockResponse
+			});
+		}
+	});
   }
 
   getHtml() {
@@ -45,8 +56,29 @@ class AIAssistantViewProvider {
       </head>
       <body>
         <h2>AI Assistant</h2>
-        <textarea placeholder="Ask something..."></textarea>
-        <button>Send</button>
+        <textarea id="prompt" placeholder="Ask something..."></textarea>
+        <button id="send">Send</button>
+		<div id="response" style="margin-top: 12px;"></div>
+		<script>
+          const vscode = acquireVsCodeApi();
+
+          document.getElementById('send').addEventListener('click', () => {
+            const text = document.getElementById('prompt').value;
+
+            vscode.postMessage({
+              type: 'userPrompt',
+              text
+            });
+          });
+
+		  window.addEventListener('message', (event) => {
+				const message = event.data;
+
+				if (message.type === 'assistantResponse') {
+					document.getElementById('response').innerText = message.text;
+				}
+			});
+        </script>
       </body>
       </html>
     `;
