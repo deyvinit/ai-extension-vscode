@@ -1,4 +1,4 @@
-# Part 5 — API Key Management
+# API Key Management
 
 ## Objective
 
@@ -19,8 +19,7 @@ This makes the extension safer, more flexible, and closer to real-world usage.
 
 ### 1. Sidebar-based API key input
 
-The API key is entered directly from the VS Code sidebar.
-This avoids:
+The API key is entered directly from the VS Code sidebar. This avoids:
 
 - environment variable setup
 - external configuration files
@@ -61,17 +60,22 @@ This prevents accidental API calls and provides clear user feedback.
 
 ---
 
-### 4. Lazy API key validation
+### 4. Eager API key validation
 
-The extension does not validate the API key at the time it is saved.
+The extension now validates the API key eagerly at the time it is saved.
 
-Instead, the key is validated lazily on first actual usage, when a request is made to the Gemini API. This means:
+When the user clicks **Save**, the backend performs a lightweight test request to the Gemini API using the provided key.
 
-- Any string can be stored as an API key
-- The key is only verified by Gemini when a prompt is sent
-- Invalid keys are rejected by the Gemini API and surfaced as runtime errors in the chat
+- If the request succeeds, the key is stored securely and the chat interface is enabled
+- If the request fails, the key is rejected, the chat remains disabled, and an inline error message is shown to the user
 
-This approach keeps the save flow lightweight and avoids unnecessary validation calls.
+This ensures that:
+
+- Invalid API keys are never persisted
+- Users receive immediate feedback
+- The assistant is never enabled with a broken configuration
+
+This validation is performed by reusing the same Gemini request path that is used for actual prompt generation, ensuring a single source of truth.
 
 ---
 
@@ -113,12 +117,12 @@ All communication between UI and backend happens via explicit message types.
 ### Entering an invalid API key
 
 - User enters an invalid or malformed API key
-- Key is saved locally without immediate validation
-- Chat becomes enabled
-- On sending a prompt, the Gemini API rejects the request
-- The error response is displayed in the conversation
-
-This behavior reflects the current lazy validation strategy.
+- Clicks Save
+- The backend attempts a lightweight Gemini validation request
+- The request fails
+- The key is not stored
+- An inline error message is displayed
+- The chat interface remains disabled
 
 ---
 
@@ -136,21 +140,6 @@ This behavior reflects the current lazy validation strategy.
 - On sidebar load, the UI requests API key status
 - If a key exists, chat is enabled automatically
 - If no key exists, chat remains disabled
-
----
-
-## Future Improvement: Eager API Key Validation
-
-A possible enhancement is to validate the API key at the time it is saved.
-
-In this approach:
-
-- A lightweight test request would be made to the Gemini API during the save operation
-- Only valid keys would be stored
-- Invalid keys would be rejected immediately with user-friendly feedback
-- The chat interface would remain disabled until a valid key is provided
-
-This would improve user experience at the cost of an additional API call.
 
 ---
 
@@ -172,3 +161,4 @@ With API key management implemented, the extension is now:
 - safer to distribute
 - easier to use for new users
 - independent of local environment configuration
+- immediate validation of API credentials
