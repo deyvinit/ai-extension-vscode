@@ -1,6 +1,8 @@
 const vscode = require('vscode');
 
-async function callGemini(prompt, apiKey) {
+let conversation = [];
+
+async function callGemini(contents, apiKey) {
 
   const response = await fetch(
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
@@ -11,22 +13,22 @@ async function callGemini(prompt, apiKey) {
         'x-goog-api-key': apiKey
       },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: prompt }]
-          }
-        ]
+        contents
       })
     }
   );
 
   if (!response.ok) {
+    if (response.status === 503) {
+      throw new Error('SERVICE_OVERLOADED');
+    }
+
+    if (response.status === 429) {
+      throw new Error('QUOTA_EXCEEDED');
+    }
+
     const errorText = await response.text();
-    const error = new Error(
-      `Gemini API error: ${response.status}\nResponse body: ${errorText}`
-    );
-    console.error(error);
-    throw error;
+    throw new Error(`Gemini API error: ${response.status}\n${errorText}`);
   }
 
   const data = await response.json();
@@ -67,27 +69,52 @@ class AIAssistantViewProvider {
 
         case 'saveApiKey': {
           try {
-            await callGemini('Say OK', message.key);
+            await callGemini(
+              [{ role: 'user', parts: [{ text: 'Say OK' }] }],
+              message.key
+            );
             await this.context.secrets.store('geminiApiKey', message.key);
 
             webviewView.webview.postMessage({
               type: 'apiKeySaved'
             });
           } catch (err) {
-            console.error('API key validation failed: ', err.message);
+            console.error('API key validation failed:', err.message);
 
-            webviewView.webview.postMessage({
-              type: 'apiKeyInvalid',
-              error: 'Invalid API key. Please check and try again.'
-            });
+            if (err.message === 'SERVICE_OVERLOADED') {
+              webviewView.webview.postMessage({
+                type: 'apiKeyInvalid',
+                error: 'Gemini service is temporarily overloaded. Please try again later.'
+              });
+            } else if (err.message === 'QUOTA_EXCEEDED') {
+              webviewView.webview.postMessage({
+                type: 'apiKeyInvalid',
+                error: 'API quota exceeded. Please wait or upgrade your plan.'
+              });
+            } else {
+              webviewView.webview.postMessage({
+                type: 'apiKeyInvalid',
+                error: 'Invalid API key. Please check and try again.'
+              });
+            }
           }
           return;
         }
 
         case 'removeApiKey': {
+          conversation = [];
           await this.context.secrets.delete('geminiApiKey');
           webviewView.webview.postMessage({
             type: 'apiKeyRemoved'
+          });
+          return;
+        }
+
+        case 'clearChat': {
+          conversation = [];
+
+          webviewView.webview.postMessage({
+            type: 'chatCleared'
           });
           return;
         }
@@ -116,6 +143,11 @@ class AIAssistantViewProvider {
         finalPrompt = `Context:\n${selectedText}\n\nUser prompt:\n${message.text}`;
       }
 
+      conversation.push({
+        role: 'user',
+        content: finalPrompt
+      });
+
       console.log('Selected text: ', selectedText);
       console.log('Final prompt sent to Gemini:\n', finalPrompt);
 
@@ -130,7 +162,22 @@ class AIAssistantViewProvider {
       }
 
       try {
-        const aiResponse = await callGemini(finalPrompt, apiKey);
+        const geminiContents = conversation.map(turn => ({
+          role: turn.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: turn.content }]
+        }));
+
+        const aiResponse = await callGemini(geminiContents, apiKey);
+
+        conversation.push({
+          role: 'assistant',
+          content: aiResponse
+        });
+
+        if (conversation.length > 20) {
+          conversation = conversation.slice(-20);
+        }
+
         webviewView.webview.postMessage({
           type: 'assistantResponse',
           text: aiResponse

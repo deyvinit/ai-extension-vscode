@@ -3,6 +3,7 @@ const vscode = acquireVsCodeApi();
 window.addEventListener('DOMContentLoaded', () => {
     const chat = document.getElementById('chat');
     const sendBtn = document.getElementById('send');
+    const clearBtn = document.getElementById('clear-chat');
     const input = document.getElementById('prompt');
     const chatSection = document.getElementById('chat-section');
     const apiKeyInput = document.getElementById('apiKeyInput');
@@ -41,6 +42,12 @@ window.addEventListener('DOMContentLoaded', () => {
             text
         });
         input.value = '';
+    });
+
+    clearBtn.addEventListener('click', () => {
+        vscode.postMessage({
+            type: 'clearChat'
+        });
     });
 
     saveKeyBtn.addEventListener('click', () => {
@@ -123,6 +130,11 @@ window.addEventListener('DOMContentLoaded', () => {
             }
 
             addMessage('assistant', message.text);
+        }
+
+        if (message.type === 'chatCleared') {
+            chat.innerHTML = '';
+            return;
         }
     });
 });
