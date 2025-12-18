@@ -11,7 +11,7 @@ extension so that user prompts can be processed and responded to in real time.
 
 - The sidebar UI runs inside a VS Code Webview
 - User input is sent from the webview to the extension backend
-- The backend is responsible for all AI-related logic
+- The backend is responsible for all AI-related logic and contextual processing
 - The AI response is sent back to the webview for display
 
 This separation ensures that sensitive logic and credentials remain on the
@@ -24,7 +24,7 @@ extension side and are not exposed to the frontend.
 1. The user enters a prompt in the sidebar UI
 2. The webview sends the prompt to the extension using `postMessage`
 3. The extension backend receives the message
-4. A request is made to the AI provider
+4. A request is made to the AI provider with the composed prompt and context
 5. The generated response is returned to the webview
 
 ---
@@ -71,8 +71,23 @@ logic separate from backend AI state management.
 
 ---
 
+## Editor Selection Context
+
+When a prompt is sent from the sidebar, the extension checks for any text
+currently selected in the active editor.
+
+If a non-empty selection exists, it is included as contextual input along with
+the user’s prompt before sending the request to the AI backend. If no selection
+is present, the assistant behaves normally.
+
+This allows the AI to generate responses that are directly grounded in the
+user’s current code or text without requiring additional UI interaction.
+
+---
+
 ## Key Learnings
 
 - Correct API versioning is critical for model availability
 - Authentication method must match the API specification
 - Cloud APIs may return transient errors even when integration is correct
+- Separating UI rendering from AI logic simplifies debugging and feature evolution
