@@ -18,6 +18,15 @@ window.addEventListener('DOMContentLoaded', () => {
 
     setChatEnabled(false);
 
+    function renderMarkdown(text) {
+        text = text.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+        text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+        text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        text = text.replace(/\*(.*?)\*/g, '<em>$1</em>');
+        text = text.replace(/\n/g, '<br>');
+        return text;
+    }
+
     vscode.postMessage({ type: 'getApiKeyStatus' });
 
     sendBtn.addEventListener('click', () => {
@@ -25,12 +34,12 @@ window.addEventListener('DOMContentLoaded', () => {
         if (!text) return;
 
         addMessage('user', text);
+        addMessage('assistant', 'Thinking...', true);
 
         vscode.postMessage({
             type: 'userPrompt',
             text
         });
-
         input.value = '';
     });
 
@@ -54,10 +63,20 @@ window.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    function addMessage(role, text) {
+    function addMessage(role, text, isTemporary = false) {
         const div = document.createElement('div');
         div.className = 'message ' + role;
-        div.innerText = (role === 'user' ? 'You' : 'AI') + ': ' + text;
+
+        if (isTemporary) {
+            div.classList.add('thinking');
+            div.dataset.temp = 'true';
+            div.innerText = text;
+        } else if (role === 'assistant') {
+            div.innerHTML = renderMarkdown(text);
+        } else {
+            div.innerText = text;
+        }
+
         chat.appendChild(div);
         chat.scrollTop = chat.scrollHeight;
     }
@@ -92,6 +111,11 @@ window.addEventListener('DOMContentLoaded', () => {
         }
 
         if (message.type === 'assistantResponse') {
+            const temp = chat.querySelector('.message.thinking');
+            if (temp) {
+                temp.remove();
+            }
+
             addMessage('assistant', message.text);
         }
     });
