@@ -59,22 +59,42 @@ class AIAssistantViewProvider {
 
     webviewView.webview.html = this.getHtml();
 
-    webviewView.webview.onDidReceiveMessage((message) => {
-      if (message.type === 'userPrompt') {
-        (async () => {
-          try {
-            const aiResponse = await callGemini(message.text);
-            webviewView.webview.postMessage({
-              type: 'assistantResponse',
-              text: aiResponse
-            });
-          } catch (error) {
-            webviewView.webview.postMessage({
-              type: 'assistantResponse',
-              text: 'Error: ' + error.message
-            });
-          }
-        })();
+    webviewView.webview.onDidReceiveMessage(async (message) => {
+      if (message.type !== 'userPrompt') {
+        return;
+      }
+
+      const editor = vscode.window.activeTextEditor;
+      let selectedText = '';
+
+      if (editor) {
+        const selection = editor.selection;
+
+        if (!selection.isEmpty) {
+          selectedText = editor.document.getText(selection);
+        }
+      }
+
+      let finalPrompt = message.text;
+
+      if (selectedText.trim()) {
+        finalPrompt = `Context:\n${selectedText}\n\nUser prompt:\n${message.text}`;
+      }
+
+      console.log('Selected text: ', selectedText);
+      console.log('Final prompt sent to Gemini:\n', finalPrompt);
+
+      try {
+        const aiResponse = await callGemini(finalPrompt);
+        webviewView.webview.postMessage({
+          type: 'assistantResponse',
+          text: aiResponse
+        });
+      } catch (error) {
+        webviewView.webview.postMessage({
+          type: 'assistantResponse',
+          text: 'Error: ' + error.message
+        });
       }
     });
   }
