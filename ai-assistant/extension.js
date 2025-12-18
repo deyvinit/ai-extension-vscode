@@ -1,11 +1,6 @@
 const vscode = require('vscode');
 
-async function callGemini(prompt) {
-  const apiKey = process.env.GEMINI_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not set');
-  }
+async function callGemini(prompt, apiKey) {
 
   const response = await fetch(
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
@@ -60,8 +55,40 @@ class AIAssistantViewProvider {
     webviewView.webview.html = getHtml(webviewView.webview, this.context);
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
-      if (message.type !== 'userPrompt') {
-        return;
+      switch (message.type) {
+        case 'getApiKeyStatus': {
+          const apiKey = await this.context.secrets.get('geminiApiKey');
+
+          webviewView.webview.postMessage({
+            type: 'apiKeyStatus',
+            hasKey: Boolean(apiKey)
+          });
+          return;
+        }
+
+        case 'saveApiKey': {
+          await this.context.secrets.store('geminiApiKey', message.key);
+
+          webviewView.webview.postMessage({
+            type: 'apiKeySaved'
+          });
+          return;
+        }
+
+        case 'removeApiKey': {
+          await this.context.secrets.delete('geminiApiKey');
+
+          webviewView.webview.postMessage({
+            type: 'apiKeyRemoved'
+          });
+          return;
+        }
+
+        case 'userPrompt':
+          break;
+
+        default:
+          return;
       }
 
       const editor = vscode.window.activeTextEditor;
@@ -84,8 +111,18 @@ class AIAssistantViewProvider {
       console.log('Selected text: ', selectedText);
       console.log('Final prompt sent to Gemini:\n', finalPrompt);
 
+      const apiKey = await this.context.secrets.get('geminiApiKey');
+
+      if (!apiKey) {
+        webviewView.webview.postMessage({
+          type: 'assistantResponse',
+          text: 'No API key set. Please add your Gemini API key.'
+        });
+        return;
+      }
+
       try {
-        const aiResponse = await callGemini(finalPrompt);
+        const aiResponse = await callGemini(finalPrompt, apiKey);
         webviewView.webview.postMessage({
           type: 'assistantResponse',
           text: aiResponse

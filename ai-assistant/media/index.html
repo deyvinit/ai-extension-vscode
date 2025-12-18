@@ -8,10 +8,26 @@
     <link rel="stylesheet" href="{{STYLE_URI}}">
 </head>
 <body>
-    <h2>AI Assistant</h2>
-    <textarea id="prompt" placeholder="Ask something..."></textarea>
-    <button id="send">Send</button>
-    <div id="chat"></div>
+    <section id="api-key-section">
+        <h3>API Key</h3>
+        <input
+            type="password"
+            id="apiKeyInput"
+            placeholder="Paste your LLM API key here"
+        />
+        <div>
+            <button id="saveKeyBtn">Save / Update</button>
+            <button id="removeKeyBtn">Remove</button>
+        </div>
+        <div id="keyStatus"></div>
+    </section>
+    <hr />
+    <section id="chat-section">
+        <h2>AI Assistant</h2>
+        <textarea id="prompt" placeholder="Ask something..."></textarea>
+        <button id="send">Send</button>
+        <div id="chat"></div>
+    </section>
 
     <script src="{{SCRIPT_URI}}" defer></script>
 </body>
