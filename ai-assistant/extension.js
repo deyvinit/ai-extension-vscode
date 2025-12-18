@@ -58,7 +58,6 @@ class AIAssistantViewProvider {
       switch (message.type) {
         case 'getApiKeyStatus': {
           const apiKey = await this.context.secrets.get('geminiApiKey');
-
           webviewView.webview.postMessage({
             type: 'apiKeyStatus',
             hasKey: Boolean(apiKey)
@@ -67,17 +66,26 @@ class AIAssistantViewProvider {
         }
 
         case 'saveApiKey': {
-          await this.context.secrets.store('geminiApiKey', message.key);
+          try {
+            await callGemini('Say OK', message.key);
+            await this.context.secrets.store('geminiApiKey', message.key);
 
-          webviewView.webview.postMessage({
-            type: 'apiKeySaved'
-          });
+            webviewView.webview.postMessage({
+              type: 'apiKeySaved'
+            });
+          } catch (err) {
+            console.error('API key validation failed: ', err.message);
+
+            webviewView.webview.postMessage({
+              type: 'apiKeyInvalid',
+              error: 'Invalid API key. Please check and try again.'
+            });
+          }
           return;
         }
 
         case 'removeApiKey': {
           await this.context.secrets.delete('geminiApiKey');
-
           webviewView.webview.postMessage({
             type: 'apiKeyRemoved'
           });

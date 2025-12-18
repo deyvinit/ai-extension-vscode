@@ -103,6 +103,12 @@ window.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        if (message.type === 'apiKeyInvalid') {
+            keyStatus.textContent = message.error || 'Invalid API Key.';
+            setChatEnabled(false);
+            return;
+        }
+
         if (message.type === 'apiKeyRemoved') {
             keyStatus.textContent = 'API key removed.';
             apiKeyInput.value = '';
