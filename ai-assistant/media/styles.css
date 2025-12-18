@@ -1,0 +1,39 @@
+body {
+    font-family: sans-serif;
+    padding: 10px;
+}
+
+h2 {
+    margin-top: 0;
+}
+
+textarea {
+    width: 100%;
+    height: 80px;
+    resize: vertical;
+}
+
+button {
+    margin-top: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+}
+
+#chat {
+    margin-top: 12px;
+}
+
+.message {
+    margin-bottom: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+}
+
+.message.user {
+    background-color: #e0f0ff;
+    font-weight: 500;
+}
+
+.message.assistant {
+    background-color: #f4f4f4;
+}

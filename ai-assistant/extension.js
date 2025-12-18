@@ -57,7 +57,7 @@ class AIAssistantViewProvider {
       enableScripts: true
     };
 
-    webviewView.webview.html = this.getHtml();
+    webviewView.webview.html = getHtml(webviewView.webview, this.context);
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       if (message.type !== 'userPrompt') {
@@ -98,96 +98,25 @@ class AIAssistantViewProvider {
       }
     });
   }
+}
 
-  getHtml() {
-    return `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>AI Assistant</title>
-        <style>
-          body {
-            font-family: sans-serif;
-            padding: 10px;
-          }
-          h2 {
-            margin-top: 0;
-          }
-          textarea {
-            width: 100%;
-            height: 80px;
-            resize: vertical;
-          }
-          button {
-            margin-top: 8px;
-            padding: 6px 10px;
-            cursor: pointer;
-          }
-          #chat {
-            margin-top: 12px;
-          }
-          .message {
-            margin-bottom: 8px;
-            padding: 6px 8px;
-            border-radius: 4px;
-          }
-          .message.user {
-            background-color: #e0f0ff;
-            font-weight: 500;
-          }
-          .message.assistant {
-            background-color: #f4f4f4;
-          }
-        </style>
-      </head>
-      <body>
-        <h2>AI Assistant</h2>
-        <textarea id="prompt" placeholder="Ask something..."></textarea>
-        <button id="send">Send</button>
-        <div id="chat"></div>
+function getHtml(webview, context) {
+  const fs = require('fs');
 
-        <script>
-          const vscode = acquireVsCodeApi();
+  const htmlPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'index.html');
+  const cssPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'styles.css');
+  const jsPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'script.js');
 
-          document.getElementById('send').addEventListener('click', () => {
-            const input = document.getElementById('prompt');
-            const text = input.value.trim();
+  const cssUri = webview.asWebviewUri(cssPath);
+  const jsUri = webview.asWebviewUri(jsPath);
 
-            if (!text) return;
+  let html = fs.readFileSync(htmlPath.fsPath, 'utf8');
 
-            addMessage('user', text);
+  html = html
+    .replace('{{STYLE_URI}}', cssUri)
+    .replace('{{SCRIPT_URI}}', jsUri);
 
-            vscode.postMessage({
-              type: 'userPrompt',
-              text
-            });
-
-            input.value = '';
-          });
-
-          const chat = document.getElementById('chat');
-
-          function addMessage(role, text) {
-            const div = document.createElement('div');
-            div.className = 'message ' + role;
-            div.innerText = (role === 'user' ? 'You' : 'AI') + ': ' + text;
-            chat.appendChild(div);
-          }
-
-          window.addEventListener('message', (event) => {
-            const message = event.data;
-
-            if (message.type === 'assistantResponse') {
-              addMessage('assistant', message.text);
-            }
-          });
-        </script>
-      </body>
-      </html>
-    `;
-  }
+  return html;
 }
 
 function activate(context) {
