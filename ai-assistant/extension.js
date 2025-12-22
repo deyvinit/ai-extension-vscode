@@ -10,9 +10,22 @@ const getSelectedTextFunction = {
   }
 };
 
+const getCurrentFileFunction = {
+  name: 'get_current_file',
+  description: 'Returns the full text content of the currently active VS Code editor file.',
+  parameters: {
+    type: 'object',
+    properties: {},
+    required: []
+  }
+};
+
 const tools = [
   {
-    functionDeclarations: [getSelectedTextFunction]
+    functionDeclarations: [
+      getSelectedTextFunction,
+      getCurrentFileFunction
+    ]
   }
 ];
 
@@ -96,6 +109,45 @@ async function callGemini(contents, apiKey, tools = []) {
         [
           {
             functionDeclarations: [getSelectedTextFunction]
+          }
+        ]
+      );
+
+      return finalResponse;
+    }
+
+    else if (functionName === 'get_current_file') {
+      const editor = vscode.window.activeTextEditor;
+      const fileText = editor ? editor.document.getText() : '';
+
+      console.log('Executing tool: get_current_file');
+      console.log('Tool result length: ', fileText.length);
+
+      const followUpContents = [
+        ...contents,
+        data.candidates[0].content,
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_current_file',
+                response: { text: fileText }
+              }
+            }
+          ]
+        }
+      ];
+
+      const finalResponse = await callGemini(
+        followUpContents,
+        apiKey,
+        [
+          {
+            functionDeclarations: [
+              getSelectedTextFunction,
+              getCurrentFileFunction
+            ]
           }
         ]
       );
