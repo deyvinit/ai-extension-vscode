@@ -1,8 +1,24 @@
 const vscode = require('vscode');
 
+const getSelectedTextFunction = {
+  name: 'get_selected_text',
+  description: 'Returns the currently selected text in the acitve VS Code editor.',
+  parameters: {
+    type: 'object',
+    properties: {},
+    required: []
+  }
+};
+
+const tools = [
+  {
+    functionDeclarations: [getSelectedTextFunction]
+  }
+];
+
 let conversation = [];
 
-async function callGemini(contents, apiKey) {
+async function callGemini(contents, apiKey, tools = []) {
 
   const response = await fetch(
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
@@ -13,7 +29,8 @@ async function callGemini(contents, apiKey) {
         'x-goog-api-key': apiKey
       },
       body: JSON.stringify({
-        contents
+        contents,
+        tools
       })
     }
   );
@@ -32,6 +49,65 @@ async function callGemini(contents, apiKey) {
   }
 
   const data = await response.json();
+
+  const parts = data.candidates?.[0]?.content?.parts || [];
+
+  console.log(
+    'Gemini response parts: ',
+    JSON.stringify(parts, null, 2)
+  );
+
+  const functionCallPart = parts.find(p => p.functionCall);
+
+  console.log('Detected functionCallPart: ', functionCallPart);
+
+  if (functionCallPart) {
+    const functionName = functionCallPart.functionCall.name;
+
+    if (functionName === 'get_selected_text') {
+      const editor = vscode.window.activeTextEditor;
+      const selectedText =
+        editor && !editor.selection.isEmpty
+          ? editor.document.getText(editor.selection)
+          : '';
+
+      console.log('Executing tool: get_selected_text');
+      console.log('Tool result: ', selectedText);
+
+      const followUpContents = [
+        ...contents,
+        data.candidates[0].content,
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_selected_text',
+                response: { text: selectedText }
+              }
+            }
+          ]
+        }
+      ];
+
+      const finalResponse = await callGemini(
+        followUpContents,
+        apiKey,
+        [
+          {
+            functionDeclarations: [getSelectedTextFunction]
+          }
+        ]
+      );
+
+      return finalResponse;
+    }
+  }
+
+  console.log(
+    'Function calls from Gemini:',
+    data.candidates?.[0]?.content?.parts?.filter(p => p.functionCall)
+  );
 
   const candidate = data.candidates?.[0];
 
@@ -137,11 +213,7 @@ class AIAssistantViewProvider {
         }
       }
 
-      let finalPrompt = message.text;
-
-      if (selectedText.trim()) {
-        finalPrompt = `Context:\n${selectedText}\n\nUser prompt:\n${message.text}`;
-      }
+      const finalPrompt = message.text;
 
       conversation.push({
         role: 'user',
@@ -167,7 +239,11 @@ class AIAssistantViewProvider {
           parts: [{ text: turn.content }]
         }));
 
-        const aiResponse = await callGemini(geminiContents, apiKey);
+        const aiResponse = await callGemini(
+          geminiContents,
+          apiKey,
+          tools
+        );
 
         conversation.push({
           role: 'assistant',
