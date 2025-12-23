@@ -70,11 +70,16 @@ async function callGemini(contents, apiKey, tools = []) {
     JSON.stringify(parts, null, 2)
   );
 
-  const functionCallPart = parts.find(p => p.functionCall);
+  let currentContents = contents;
+  let currentParts = parts;
 
-  console.log('Detected functionCallPart: ', functionCallPart);
+  while (true) {
+    const functionCallPart = currentParts.find(p => p.functionCall);
 
-  if (functionCallPart) {
+    if (!functionCallPart) {
+      break;
+    }
+
     const functionName = functionCallPart.functionCall.name;
 
     if (functionName === 'get_selected_text') {
@@ -87,8 +92,8 @@ async function callGemini(contents, apiKey, tools = []) {
       console.log('Executing tool: get_selected_text');
       console.log('Tool result: ', selectedText);
 
-      const followUpContents = [
-        ...contents,
+      currentContents = [
+        ...currentContents,
         data.candidates[0].content,
         {
           role: 'user',
@@ -102,18 +107,6 @@ async function callGemini(contents, apiKey, tools = []) {
           ]
         }
       ];
-
-      const finalResponse = await callGemini(
-        followUpContents,
-        apiKey,
-        [
-          {
-            functionDeclarations: [getSelectedTextFunction]
-          }
-        ]
-      );
-
-      return finalResponse;
     }
 
     else if (functionName === 'get_current_file') {
@@ -123,8 +116,8 @@ async function callGemini(contents, apiKey, tools = []) {
       console.log('Executing tool: get_current_file');
       console.log('Tool result length: ', fileText.length);
 
-      const followUpContents = [
-        ...contents,
+      currentContents = [
+        ...currentContents,
         data.candidates[0].content,
         {
           role: 'user',
@@ -138,37 +131,29 @@ async function callGemini(contents, apiKey, tools = []) {
           ]
         }
       ];
-
-      const finalResponse = await callGemini(
-        followUpContents,
-        apiKey,
-        [
-          {
-            functionDeclarations: [
-              getSelectedTextFunction,
-              getCurrentFileFunction
-            ]
-          }
-        ]
-      );
-
-      return finalResponse;
     }
+
+    const followUpResponse = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
+        body: JSON.stringify({
+          contents: currentContents,
+          tools
+        })
+      }
+    );
+    const followUpData = await followUpResponse.json();
+
+    currentParts = followUpData.candidates?.[0]?.content?.parts || [];
   }
 
-  console.log(
-    'Function calls from Gemini:',
-    data.candidates?.[0]?.content?.parts?.filter(p => p.functionCall)
-  );
-
-  const candidate = data.candidates?.[0];
-
-  return (
-    candidate?.content?.parts?.[0]?.text ||
-    candidate?.content?.text ||
-    candidate?.output_text ||
-    'No response from Gemini'
-  );
+  const finalTextPart = currentParts.find(p => p.text);
+  return finalTextPart?.text || 'No response from Gemini';
 }
 class AIAssistantViewProvider {
   static viewType = 'aiAssistant.sidebar';
