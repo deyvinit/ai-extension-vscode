@@ -24,10 +24,16 @@
     <hr />
     <section id="chat-section">
         <h2>AI Assistant</h2>
-        <textarea id="prompt" placeholder="Ask something..."></textarea>
-        <button id="send">Send</button>
-        <button id="clear-chat">Clear</button>
-        <div id="chat"></div>
+        <div id="chat-container">
+            <div id="chat"></div>
+        </div>
+        <div id="chat-input">
+            <textarea id="prompt" placeholder="Ask Something..."></textarea>
+            <div>
+                <button id="send">Send</button>
+                <button id="clear-chat">Clear</button>
+            </div>
+        </div>
     </section>
 
     <script src="{{SCRIPT_URI}}" defer></script>

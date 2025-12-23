@@ -64,6 +64,17 @@ button:disabled {
     padding-right: 4px;
 }
 
+#chat-section {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+#chat-input {
+    margin-top: auto;
+    padding-top: 8px;
+}
+
 .message {
     max-width: 85%;
     padding: 8px 10px;
