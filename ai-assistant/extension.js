@@ -20,16 +20,38 @@ const getCurrentFileFunction = {
   }
 };
 
+const applyEditorEditsFunction = {
+  name: 'apply_code_edits',
+  description: 'Proposes code edits to be applied to the active editor. Requires user confirmation.',
+  parameters: {
+    type: 'object',
+    properties: {
+      reason: {
+        type: 'string',
+        description: 'Why these edits are being suggested'
+      },
+      newText: {
+        type: 'string',
+        description: 'The full updated content to replace the current editor content'
+      }
+    },
+    required: ['reason', 'newText']
+  }
+};
+
 const tools = [
   {
     functionDeclarations: [
       getSelectedTextFunction,
-      getCurrentFileFunction
+      getCurrentFileFunction,
+      applyEditorEditsFunction
     ]
   }
 ];
 
 let conversation = [];
+
+let hasAppliedEdits = false;
 
 async function callGemini(contents, apiKey, tools = []) {
 
@@ -133,6 +155,61 @@ async function callGemini(contents, apiKey, tools = []) {
       ];
     }
 
+    else if (functionName === 'apply_code_edits') {
+
+      if (hasAppliedEdits) {
+        console.log('Skipping additional editor edits');
+        break;
+      }
+
+      hasAppliedEdits = true;
+
+      const { reason, newText } = functionCallPart.functionCall.args;
+
+      console.log('Proposed editor edits: ', reason);
+
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        break;
+      }
+
+      const confirmation = await vscode.window.showInformationMessage(
+        `AI wants to apply changes:\n\n${reason}`,
+        { modal: true },
+        'Apply',
+        'Cancel'
+      );
+
+      if (confirmation !== 'Apply') {
+        break;
+      }
+
+      await editor.edit(editBuilder => {
+        const fullRange = new vscode.Range(
+          editor.document.positionAt(0),
+          editor.document.positionAt(editor.document.getText().length)
+        );
+        editBuilder.replace(fullRange, newText);
+      });
+
+      currentContents = [
+        ...currentContents,
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'apply_code_edits',
+                response: { success: true }
+              }
+            }
+          ]
+        }
+      ];
+
+      return 'Changes applied succesfully.'
+    }
+
     const followUpResponse = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
       {
@@ -148,6 +225,8 @@ async function callGemini(contents, apiKey, tools = []) {
       }
     );
     const followUpData = await followUpResponse.json();
+
+    data.candidates[0].content = followUpData.candidates[0].content;
 
     currentParts = followUpData.candidates?.[0]?.content?.parts || [];
   }
@@ -296,6 +375,15 @@ class AIAssistantViewProvider {
           text: aiResponse
         });
       } catch (error) {
+        if (error.message === 'QUOTA_EXCEEDED') {
+          webviewView.webview.postMessage({
+            type: 'assistantResponse',
+            text: 'API quota exceeded. Please try again later.'
+          });
+
+          return;
+        }
+
         webviewView.webview.postMessage({
           type: 'assistantResponse',
           text: 'Error: ' + error.message
