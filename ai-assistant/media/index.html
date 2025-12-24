@@ -13,7 +13,7 @@
         <input
             type="password"
             id="apiKeyInput"
-            placeholder="Paste your LLM API key here"
+            placeholder="Paste your Gemini API key here"
         />
         <div>
             <button id="saveKeyBtn">Save / Update</button>
@@ -28,6 +28,11 @@
             <div id="chat"></div>
         </div>
         <div id="chat-input">
+            <div id="attachment-bar">
+                <button id="attachFileBtn">Attach File</button>
+                <span id="attachedFileName"></span>
+                <button id="removeFileBtn">Remove</button>
+            </div>
             <textarea id="prompt" placeholder="Ask Something..."></textarea>
             <div>
                 <button id="send">Send</button>

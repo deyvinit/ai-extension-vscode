@@ -10,6 +10,10 @@ window.addEventListener('DOMContentLoaded', () => {
     const saveKeyBtn = document.getElementById('saveKeyBtn');
     const removeKeyBtn = document.getElementById('removeKeyBtn');
     const keyStatus = document.getElementById('keyStatus');
+    const attachFileBtn = document.getElementById('attachFileBtn');
+    const attachedFileName = document.getElementById('attachedFileName');
+    const removeFileBtn = document.getElementById('removeFileBtn');
+    let attachedFile = null;
 
     function setChatEnabled(enabled) {
         chatSection.style.opacity = enabled ? '1' : '0.5';
@@ -39,8 +43,12 @@ window.addEventListener('DOMContentLoaded', () => {
 
         vscode.postMessage({
             type: 'userPrompt',
-            text
+            text,
+            attachedFile
         });
+
+        attachedFile = null;
+        attachedFileName.textContent = '';
         input.value = '';
     });
 
@@ -88,6 +96,15 @@ window.addEventListener('DOMContentLoaded', () => {
         chat.scrollTop = chat.scrollHeight;
     }
 
+    attachFileBtn.addEventListener('click', () => {
+        vscode.postMessage({ type: 'pickFile' });
+    });
+
+    removeFileBtn.addEventListener('click', () => {
+        attachedFile = null;
+        attachedFileName.textContent = '';
+    });
+
     window.addEventListener('message', (event) => {
         const message = event.data;
 
@@ -120,6 +137,14 @@ window.addEventListener('DOMContentLoaded', () => {
             keyStatus.textContent = 'API key removed.';
             apiKeyInput.value = '';
             setChatEnabled(false);
+            return;
+        }
+
+        if (message.type === 'filePicked') {
+            attachedFile = message.file;
+            if (attachedFileName) {
+                attachedFileName.textContent = `Attached: ${message.file.name}`;
+            }
             return;
         }
 

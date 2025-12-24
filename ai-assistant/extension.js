@@ -2,7 +2,7 @@ const vscode = require('vscode');
 
 const getSelectedTextFunction = {
   name: 'get_selected_text',
-  description: 'Returns the currently selected text in the acitve VS Code editor.',
+  description: 'Returns the currently selected text in the active VS Code editor.',
   parameters: {
     type: 'object',
     properties: {},
@@ -39,12 +39,28 @@ const applyEditorEditsFunction = {
   }
 };
 
+const getAttachedFileFunction = {
+  name: 'get_attached_file',
+  description: 'Returns the content of a user-attached file using its file path.',
+  parameters: {
+    type: 'object',
+    properties: {
+      path: {
+        type: 'string',
+        description: 'Absolute file path of the attached file'
+      }
+    },
+    required: ['path']
+  }
+};
+
 const tools = [
   {
     functionDeclarations: [
       getSelectedTextFunction,
       getCurrentFileFunction,
-      applyEditorEditsFunction
+      applyEditorEditsFunction,
+      getAttachedFileFunction
     ]
   }
 ];
@@ -54,7 +70,7 @@ let conversation = [];
 let hasAppliedEdits = false;
 
 async function callGemini(contents, apiKey, tools = []) {
-
+  hasAppliedEdits = false;
   const response = await fetch(
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
     {
@@ -147,6 +163,38 @@ async function callGemini(contents, apiKey, tools = []) {
             {
               functionResponse: {
                 name: 'get_current_file',
+                response: { text: fileText }
+              }
+            }
+          ]
+        }
+      ];
+    }
+
+    else if (functionName === 'get_attached_file') {
+      const fs = require('fs');
+
+      const { path } = functionCallPart.functionCall.args;
+
+      let fileText = '';
+      try {
+        fileText = fs.readFileSync(path, 'utf8');
+      } catch {
+        fileText = `Failed to read file at path: ${path}`;
+      }
+
+      console.log('Executing tool: get_attached_file');
+      console.log('Tool result length: ', fileText.length);
+
+      currentContents = [
+        ...currentContents,
+        data.candidates[0].content,
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                name: 'get_attached_file',
                 response: { text: fileText }
               }
             }
@@ -302,6 +350,26 @@ class AIAssistantViewProvider {
           return;
         }
 
+        case 'pickFile': {
+          const result = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectMany: false
+          });
+
+          if (!result || result.length === 0) return;
+
+          const filePath = result[0].fsPath;
+
+          webviewView.webview.postMessage({
+            type: 'filePicked',
+            file: {
+              name: filePath.split('/').pop(),
+              path: filePath
+            }
+          });
+          return;
+        }
+
         case 'clearChat': {
           conversation = [];
 
@@ -331,6 +399,8 @@ class AIAssistantViewProvider {
 
       const finalPrompt = message.text;
 
+      const attachedFile = message.attachedFile || null;
+
       conversation.push({
         role: 'user',
         content: finalPrompt
@@ -354,6 +424,15 @@ class AIAssistantViewProvider {
           role: turn.role === 'assistant' ? 'model' : 'user',
           parts: [{ text: turn.content }]
         }));
+
+        if (attachedFile?.path) {
+          geminiContents.push({
+            role: 'user',
+            parts: [{
+              text: `User has attached a file at path: ${attachedFile.path}`
+            }]
+          });
+        }
 
         const aiResponse = await callGemini(
           geminiContents,
