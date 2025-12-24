@@ -24,20 +24,27 @@ const getCurrentFileFunction = {
 
 const applyEditorEditsFunction = {
   name: 'apply_code_edits',
-  description: 'Proposes code edits to be applied to the active editor. Requires user confirmation.',
+  description:
+    'Proposes code edits to be applied to the active editor. Only valid when the user explicitly requested a code change.',
   parameters: {
     type: 'object',
     properties: {
       reason: {
         type: 'string',
-        description: 'Why these edits are being suggested'
+        description:
+          'Explain why the user request requires modifying code (quote or reference the user request).'
       },
       newText: {
         type: 'string',
-        description: 'The full updated content to replace the current editor content'
+        description:
+          'The full updated content to replace the current editor content.'
+      }, explanation: {
+        type: 'string',
+        description:
+          'Explain what was changed and why, to be shown to the user after edits are applied.'
       }
     },
-    required: ['reason', 'newText']
+    required: ['reason', 'newText', 'explanation']
   }
 };
 
@@ -68,10 +75,10 @@ const tools = [
 ];
 
 function detectProviderFromKey(apiKey) {
-  if (apiKey.startsWith('AIza')) return 'gemini';
-  if (apiKey.startsWith('gsk_')) return 'groq';
-  if (apiKey.startsWith('sk-ant-')) return 'anthropic';
-  if (apiKey.startsWith('sk-')) return 'openai';
+  if (apiKey.startsWith('AIza')) return 'Gemini';
+  if (apiKey.startsWith('gsk_')) return 'Groq';
+  if (apiKey.startsWith('sk-ant-')) return 'Anthropic';
+  if (apiKey.startsWith('sk-')) return 'OpenAI';
   return 'unknown';
 }
 
@@ -80,6 +87,8 @@ let conversation = [];
 let hasAppliedEdits = false;
 
 async function callGemini(contents, apiKey, tools = []) {
+  let toolIterations = 0;
+  const MAX_TOOL_ITERATIONS = 5;
   hasAppliedEdits = false;
   const response = await fetch(
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
@@ -121,7 +130,9 @@ async function callGemini(contents, apiKey, tools = []) {
   let currentContents = contents;
   let currentParts = parts;
 
-  while (true) {
+  while (toolIterations < MAX_TOOL_ITERATIONS) {
+    toolIterations++;
+
     const functionCallPart = currentParts.find(p => p.functionCall);
 
     if (!functionCallPart) {
@@ -132,8 +143,26 @@ async function callGemini(contents, apiKey, tools = []) {
 
     if (functionName === 'get_selected_text') {
       const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        currentContents = [
+          ...currentContents,
+          data.candidates[0].content,
+          {
+            role: 'user',
+            parts: [
+              {
+                functionResponse: {
+                  name: 'get_selected_text',
+                  response: { text: '[NO_ACTIVE_EDITOR]' }
+                }
+              }
+            ]
+          }
+        ];
+        continue;
+      }
       const selectedText =
-        editor && !editor.selection.isEmpty
+        !editor.selection.isEmpty
           ? editor.document.getText(editor.selection)
           : '';
 
@@ -265,7 +294,7 @@ async function callGemini(contents, apiKey, tools = []) {
         }
       ];
 
-      return 'Changes applied succesfully.'
+      return 'Changes applied successfully.'
     }
 
     const followUpResponse = await fetch(
@@ -293,44 +322,248 @@ async function callGemini(contents, apiKey, tools = []) {
   return finalTextPart?.text || 'No response from LLM';
 }
 
-async function callGroq(contents, apiKey, _tools = []) {
-  const response = await fetch(
-    'https://api.groq.com/openai/v1/chat/completions',
+async function callGroq(contents, apiKey, tools = []) {
+  let toolIterations = 0;
+  let hasAppliedGroqEdits = false;
+  const MAX_TOOL_ITERATIONS = 5;
+
+  let messages = [
     {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: contents.map(c => ({
-          role: c.role === 'model' ? 'assistant' : c.role,
-          content: c.parts?.[0]?.text || ''
-        }))
-      })
-    }
-  );
+      role: 'system',
+      content:
+        `You are an expert IDE code assistant operating inside a code editor.
 
-  if (!response.ok) {
-    if (response.status === 429) {
-      throw new Error('QUOTA_EXCEEDED');
+        STRICT RULES:
+        1. NEVER modify code unless the user explicitly asks to write, add, fix, refactor, or change code.
+        2. BEFORE calling apply_code_edits, you MUST read context using get_current_file or get_selected_text.
+        3. apply_code_edits MUST:
+        - Preserve the programming language of the file
+        - Return the FULL updated file content (not partial snippets)
+        - Make minimal, necessary changes only
+        4. When calling apply_code_edits, you MUST include:
+        - a clear reason
+        - a clear explanation of what changed and why
+        5. If no meaningful fix is possible, DO NOT call apply_code_edits. Explain instead.
+        6. Never replace the file with placeholders, summaries, or generic text.
+
+        Violation of these rules is considered an error.`
+    },
+    ...contents.map(c => ({
+      role: c.role === 'model' ? 'assistant' : c.role || 'user',
+      content: c.parts?.[0]?.text || ''
+    }))
+  ];
+
+  while (toolIterations < MAX_TOOL_ITERATIONS) {
+    toolIterations++;
+    if (toolIterations > MAX_TOOL_ITERATIONS) {
+      throw new Error('Tool loop exceeded safe limit');
     }
 
-    const errorText = await response.text();
-    throw new Error(`GROQ_API_ERROR: ${response.status}\n${errorText}`);
+    const response = await fetch(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages,
+          tools: tools?.[0]?.functionDeclarations?.map(fn => ({
+            type: 'function',
+            function: {
+              name: fn.name,
+              description: fn.description,
+              parameters: fn.parameters
+            }
+          })),
+          tool_choice: 'auto'
+        })
+      }
+    );
+
+    if (!response.ok) {
+      if (response.status === 429) {
+        throw new Error('QUOTA_EXCEEDED');
+      }
+
+      const errorText = await response.text();
+      throw new Error(`GROQ_API_ERROR: ${response.status}\n${errorText}`);
+    }
+
+    const data = await response.json();
+    const message = data.choices?.[0]?.message;
+
+    messages.push({
+      role: 'assistant',
+      content: message.content || '',
+      tool_calls: message.tool_calls
+    });
+
+    if (!message.tool_calls || message.tool_calls.length === 0) {
+      return message.content || 'No response from Groq';
+    }
+
+    for (const toolCall of message.tool_calls) {
+      const toolName = toolCall.function.name;
+      const args = JSON.parse(toolCall.function.arguments || '{}');
+
+      console.log('[GROQ_TOOL]', toolName);
+
+      let toolResult = '';
+
+      if (toolName === 'get_selected_text') {
+        const editor = vscode.window.activeTextEditor;
+        toolResult =
+          editor && !editor.selection.isEmpty
+            ? editor.document.getText(editor.selection)
+            : '[NO_SELECTION]';
+
+        messages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          name: 'get_selected_text',
+          content: toolResult
+        });
+        continue;
+      }
+
+      else if (toolName === 'get_current_file') {
+        const editor = vscode.window.activeTextEditor;
+        toolResult = editor
+          ? editor.document.getText()
+          : '[NO_ACTIVE_FILE]';
+
+        messages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          name: 'get_current_file',
+          content: toolResult
+        });
+        continue;
+      }
+
+      else if (toolName === 'get_attached_file') {
+        const fs = require('fs');
+        try {
+          toolResult = fs.readFileSync(args.path, 'utf8');
+        } catch {
+          toolResult = `Failed to read file at path: ${args.path}`;
+        }
+
+        messages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          name: 'get_attached_file',
+          content: toolResult
+        });
+        continue;
+      }
+
+      else if (toolName === 'apply_code_edits') {
+        if (hasAppliedGroqEdits) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: 'apply_code_edits',
+            content: 'Edit rejected: edits already applied for this request.'
+          });
+          continue;
+        }
+        hasAppliedGroqEdits = true;
+        const { reason, newText, explanation } = args;
+
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: 'apply_code_edits',
+            content: '[NO_ACTIVE_EDITOR]'
+          });
+          continue;
+        }
+
+        if (!newText || newText.trim().length < 10) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: 'apply_code_edits',
+            content:
+              'Edit rejected: proposed changes are too small or destructive to be a valid fix.'
+          });
+          continue;
+        }
+
+
+        if (!reason || reason.trim().length < 10) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: 'apply_code_edits',
+            content:
+              'Edit rejected: the request is ambiguous. Ask the user to clarify what kind of fix is required (formatting, logic, refactor, etc.).'
+          });
+          continue;
+        }
+
+        const hasReadContext = messages.some(
+          m =>
+            m.role === 'tool' &&
+            (m.name === 'get_current_file' || m.name === 'get_selected_text')
+        );
+
+        if (!hasReadContext) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: 'apply_code_edits',
+            content:
+              'Edit rejected: you must read the file using get_current_file or get_selected_text before proposing edits.'
+          });
+
+          continue;
+        }
+
+        const confirmation = await vscode.window.showInformationMessage(
+          `AI wants to apply the following changes:\n\n${reason}`,
+          { modal: true },
+          'Apply',
+          'Cancel'
+        );
+
+        if (confirmation === 'Apply') {
+          await editor.edit(editBuilder => {
+            const fullRange = new vscode.Range(
+              editor.document.positionAt(0),
+              editor.document.positionAt(editor.document.getText().length)
+            );
+            editBuilder.replace(fullRange, newText);
+          });
+
+          return `Changes applied successfully.\n\nExplanation:\n${explanation}`;
+        } else {
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: 'apply_code_edits',
+            content: 'User rejected the proposed edits.'
+          });
+          continue;
+        }
+      }
+    }
   }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content || 'No response from Groq';
 }
 
 async function callLLM(contents, apiKey, tools = []) {
-  if (LLM_PROVIDER === 'gemini') {
+  if (LLM_PROVIDER === 'Gemini') {
     return callGemini(contents, apiKey, tools);
   }
 
-  if (LLM_PROVIDER === 'groq') {
+  if (LLM_PROVIDER === 'Groq') {
     return callGroq(contents, apiKey, tools);
   }
   throw new Error(`Unsupported LLM provider: ${LLM_PROVIDER}`);
@@ -360,7 +593,8 @@ class AIAssistantViewProvider {
           }
           webviewView.webview.postMessage({
             type: 'apiKeyStatus',
-            hasKey: Boolean(apiKey)
+            hasKey: Boolean(apiKey),
+            provider
           });
           return;
         }
@@ -382,7 +616,8 @@ class AIAssistantViewProvider {
             await this.context.secrets.store('LLMProvider', LLM_PROVIDER);
 
             webviewView.webview.postMessage({
-              type: 'apiKeySaved'
+              type: 'apiKeySaved',
+              provider: LLM_PROVIDER
             });
           } catch (err) {
             console.error('API key validation failed:', err.message);
@@ -457,15 +692,8 @@ class AIAssistantViewProvider {
           return;
       }
 
-      const editor = vscode.window.activeTextEditor;
-      let selectedText = '';
-
-      if (editor) {
-        const selection = editor.selection;
-
-        if (!selection.isEmpty) {
-          selectedText = editor.document.getText(selection);
-        }
+      if (message.type !== 'userPrompt') {
+        return;
       }
 
       const finalPrompt = message.text;
@@ -476,9 +704,6 @@ class AIAssistantViewProvider {
         role: 'user',
         content: finalPrompt
       });
-
-      console.log('Selected text: ', selectedText);
-      console.log('Final prompt sent to LLM:\n', finalPrompt);
 
       const apiKey = await this.context.secrets.get('LLMApiKey');
 
@@ -581,3 +806,4 @@ module.exports = {
   activate,
   deactivate
 };
+

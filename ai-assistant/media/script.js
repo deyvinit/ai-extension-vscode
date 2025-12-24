@@ -121,7 +121,11 @@ window.addEventListener('DOMContentLoaded', () => {
 
         if (message.type === 'apiKeyStatus') {
             if (message.hasKey) {
-                keyStatus.textContent = 'API key saved!';
+                const providerLabel = message.provider
+                    ? `${message.provider} API key saved!`
+                    : 'API key saved!';
+
+                keyStatus.textContent = providerLabel;
                 apiKeyInput.value = '';
                 setChatEnabled(true);
             } else {
@@ -132,7 +136,10 @@ window.addEventListener('DOMContentLoaded', () => {
         }
 
         if (message.type === 'apiKeySaved') {
-            keyStatus.textContent = 'API key saved!';
+            const providerLabel = message.provider
+                ? `${message.provider} API Key saved!`
+                : 'API key saved!';
+            keyStatus.textContent = providerLabel;
             apiKeyInput.value = '';
             setChatEnabled(true);
             return;
