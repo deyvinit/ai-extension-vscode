@@ -38,14 +38,21 @@ window.addEventListener('DOMContentLoaded', () => {
         const text = input.value.trim();
         if (!text) return;
 
+        sendBtn.disabled = true;
+
         addMessage('user', text);
         addMessage('assistant', 'Thinking...', true);
 
-        vscode.postMessage({
+        const payload = {
             type: 'userPrompt',
-            text,
-            attachedFile
-        });
+            text
+        };
+
+        if (attachedFile && attachedFile.path) {
+            payload.attachedFile = attachedFile;
+        }
+
+        vscode.postMessage(payload);
 
         attachedFile = null;
         attachedFileName.textContent = '';
@@ -103,6 +110,10 @@ window.addEventListener('DOMContentLoaded', () => {
     removeFileBtn.addEventListener('click', () => {
         attachedFile = null;
         attachedFileName.textContent = '';
+
+        vscode.postMessage({
+            type: 'removeAttachedFile'
+        });
     });
 
     window.addEventListener('message', (event) => {
@@ -149,6 +160,7 @@ window.addEventListener('DOMContentLoaded', () => {
         }
 
         if (message.type === 'assistantResponse') {
+            sendBtn.disabled = false;
             const temp = chat.querySelector('.message.thinking');
             if (temp) {
                 temp.remove();
