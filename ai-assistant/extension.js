@@ -1,5 +1,7 @@
 const vscode = require('vscode');
 
+let LLM_PROVIDER = null;
+
 const getSelectedTextFunction = {
   name: 'get_selected_text',
   description: 'Returns the currently selected text in the active VS Code editor.',
@@ -65,6 +67,14 @@ const tools = [
   }
 ];
 
+function detectProviderFromKey(apiKey) {
+  if (apiKey.startsWith('AIza')) return 'gemini';
+  if (apiKey.startsWith('gsk_')) return 'groq';
+  if (apiKey.startsWith('sk-ant-')) return 'anthropic';
+  if (apiKey.startsWith('sk-')) return 'openai';
+  return 'unknown';
+}
+
 let conversation = [];
 
 let hasAppliedEdits = false;
@@ -96,7 +106,7 @@ async function callGemini(contents, apiKey, tools = []) {
     }
 
     const errorText = await response.text();
-    throw new Error(`Gemini API error: ${response.status}\n${errorText}`);
+    throw new Error(`LLM API error: ${response.status}\n${errorText}`);
   }
 
   const data = await response.json();
@@ -104,7 +114,7 @@ async function callGemini(contents, apiKey, tools = []) {
   const parts = data.candidates?.[0]?.content?.parts || [];
 
   console.log(
-    'Gemini response parts: ',
+    'LLM response parts: ',
     JSON.stringify(parts, null, 2)
   );
 
@@ -280,7 +290,50 @@ async function callGemini(contents, apiKey, tools = []) {
   }
 
   const finalTextPart = currentParts.find(p => p.text);
-  return finalTextPart?.text || 'No response from Gemini';
+  return finalTextPart?.text || 'No response from LLM';
+}
+
+async function callGroq(contents, apiKey, _tools = []) {
+  const response = await fetch(
+    'https://api.groq.com/openai/v1/chat/completions',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: contents.map(c => ({
+          role: c.role === 'model' ? 'assistant' : c.role,
+          content: c.parts?.[0]?.text || ''
+        }))
+      })
+    }
+  );
+
+  if (!response.ok) {
+    if (response.status === 429) {
+      throw new Error('QUOTA_EXCEEDED');
+    }
+
+    const errorText = await response.text();
+    throw new Error(`GROQ_API_ERROR: ${response.status}\n${errorText}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || 'No response from Groq';
+}
+
+async function callLLM(contents, apiKey, tools = []) {
+  if (LLM_PROVIDER === 'gemini') {
+    return callGemini(contents, apiKey, tools);
+  }
+
+  if (LLM_PROVIDER === 'groq') {
+    return callGroq(contents, apiKey, tools);
+  }
+  throw new Error(`Unsupported LLM provider: ${LLM_PROVIDER}`);
 }
 class AIAssistantViewProvider {
   static viewType = 'aiAssistant.sidebar';
@@ -299,7 +352,12 @@ class AIAssistantViewProvider {
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
         case 'getApiKeyStatus': {
-          const apiKey = await this.context.secrets.get('geminiApiKey');
+          const apiKey = await this.context.secrets.get('LLMApiKey');
+          const provider = await this.context.secrets.get('LLMProvider');
+
+          if (provider) {
+            LLM_PROVIDER = provider;
+          }
           webviewView.webview.postMessage({
             type: 'apiKeyStatus',
             hasKey: Boolean(apiKey)
@@ -309,11 +367,19 @@ class AIAssistantViewProvider {
 
         case 'saveApiKey': {
           try {
-            await callGemini(
+
+            LLM_PROVIDER = detectProviderFromKey(message.key);
+
+            if (LLM_PROVIDER === 'unknown') {
+              throw new Error('UNKNOWN PROVIDER');
+            }
+
+            await callLLM(
               [{ role: 'user', parts: [{ text: 'Say OK' }] }],
               message.key
             );
-            await this.context.secrets.store('geminiApiKey', message.key);
+            await this.context.secrets.store('LLMApiKey', message.key);
+            await this.context.secrets.store('LLMProvider', LLM_PROVIDER);
 
             webviewView.webview.postMessage({
               type: 'apiKeySaved'
@@ -324,12 +390,17 @@ class AIAssistantViewProvider {
             if (err.message === 'SERVICE_OVERLOADED') {
               webviewView.webview.postMessage({
                 type: 'apiKeyInvalid',
-                error: 'Gemini service is temporarily overloaded. Please try again later.'
+                error: 'LLM service is temporarily overloaded. Please try again later.'
               });
             } else if (err.message === 'QUOTA_EXCEEDED') {
               webviewView.webview.postMessage({
                 type: 'apiKeyInvalid',
                 error: 'API quota exceeded. Please wait or upgrade your plan.'
+              });
+            } else if (err.message === 'UNKNOWN_PROVIDER') {
+              webviewView.webview.postMessage({
+                type: 'apiKeyInvalid',
+                error: 'Could not detect LLM provider from API key. Please recheck the key.'
               });
             } else {
               webviewView.webview.postMessage({
@@ -343,7 +414,7 @@ class AIAssistantViewProvider {
 
         case 'removeApiKey': {
           conversation = [];
-          await this.context.secrets.delete('geminiApiKey');
+          await this.context.secrets.delete('LLMApiKey');
           webviewView.webview.postMessage({
             type: 'apiKeyRemoved'
           });
@@ -407,26 +478,26 @@ class AIAssistantViewProvider {
       });
 
       console.log('Selected text: ', selectedText);
-      console.log('Final prompt sent to Gemini:\n', finalPrompt);
+      console.log('Final prompt sent to LLM:\n', finalPrompt);
 
-      const apiKey = await this.context.secrets.get('geminiApiKey');
+      const apiKey = await this.context.secrets.get('LLMApiKey');
 
       if (!apiKey) {
         webviewView.webview.postMessage({
           type: 'assistantResponse',
-          text: 'No API key set. Please add your Gemini API key.'
+          text: 'No API key set. Please add your LLM API key.'
         });
         return;
       }
 
       try {
-        const geminiContents = conversation.map(turn => ({
+        const LLMContents = conversation.map(turn => ({
           role: turn.role === 'assistant' ? 'model' : 'user',
           parts: [{ text: turn.content }]
         }));
 
         if (attachedFile?.path) {
-          geminiContents.push({
+          LLMContents.push({
             role: 'user',
             parts: [{
               text: `User has attached a file at path: ${attachedFile.path}`
@@ -434,8 +505,8 @@ class AIAssistantViewProvider {
           });
         }
 
-        const aiResponse = await callGemini(
-          geminiContents,
+        const aiResponse = await callLLM(
+          LLMContents,
           apiKey,
           tools
         );
