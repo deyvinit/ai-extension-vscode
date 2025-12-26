@@ -169,3 +169,13 @@ hr {
     white-space: nowrap;
     max-width: 180px;
 }
+
+#stop-btn {
+    margin-left: 8px;
+    opacity: 0.6;
+}
+
+#stop-btn:not(:disabled) {
+    opacity: 1;
+    cursor: pointer;
+}

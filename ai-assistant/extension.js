@@ -1,88 +1,24 @@
 const vscode = require('vscode');
+const ToolHandler = require('./tools/handlers');
+const { validateGeminiApiKey } = require('./tools/validators');
+const { getAllTools } = require('./tools/definitions');
 
 let LLM_PROVIDER = null;
-
-const getSelectedTextFunction = {
-  name: 'get_selected_text',
-  description: 'Returns the currently selected text in the active VS Code editor.',
-  parameters: {
-    type: 'object',
-    properties: {},
-    required: []
-  }
-};
-
-const getCurrentFileFunction = {
-  name: 'get_current_file',
-  description: 'Returns the full text content of the currently active VS Code editor file.',
-  parameters: {
-    type: 'object',
-    properties: {},
-    required: []
-  }
-};
-
-const applyEditorEditsFunction = {
-  name: 'apply_code_edits',
-  description:
-    'Proposes code edits to be applied to the active editor. Only valid when the user explicitly requested a code change.',
-  parameters: {
-    type: 'object',
-    properties: {
-      reason: {
-        type: 'string',
-        description:
-          'Explain why the user request requires modifying code (quote or reference the user request).'
-      },
-      newText: {
-        type: 'string',
-        description:
-          'The full updated content to replace the current editor content.'
-      }, explanation: {
-        type: 'string',
-        description:
-          'Explain what was changed and why, to be shown to the user after edits are applied.'
-      }
-    },
-    required: ['reason', 'newText', 'explanation']
-  }
-};
-
-const getAttachedFileFunction = {
-  name: 'get_attached_file',
-  description: 'Returns the content of a user-attached file using its file path.',
-  parameters: {
-    type: 'object',
-    properties: {
-      path: {
-        type: 'string',
-        description: 'Absolute file path of the attached file'
-      }
-    },
-    required: ['path']
-  }
-};
-
-const tools = [
-  {
-    functionDeclarations: [
-      getSelectedTextFunction,
-      getCurrentFileFunction,
-      applyEditorEditsFunction,
-      getAttachedFileFunction
-    ]
-  }
-];
-
+let generationWasAborted = false;
+let currentAbortController = null;
 let conversation = [];
 
-let hasAppliedEdits = false;
+const tools = getAllTools();
 
 async function callGemini(contents, apiKey, tools = [], onChunk = null) {
+  const toolHandler = new ToolHandler();
+  toolHandler.reset();
+
   let toolIterations = 0;
   const MAX_TOOL_ITERATIONS = 5;
-  hasAppliedEdits = false;
+
   let currentContents = contents;
+  let accumulatedText = "";
 
   if (currentContents.length > 0 && currentContents[0].role === 'user' && !currentContents[0].parts[0].text.includes('You are an expert IDE code assistant')) {
     currentContents = [
@@ -110,8 +46,16 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
     ];
   }
 
+  currentAbortController = new AbortController();
+  const { signal } = currentAbortController;
+
   while (toolIterations < MAX_TOOL_ITERATIONS) {
     toolIterations++;
+
+    if (signal.aborted) {
+      console.log(`[STREAM] Aborted at start of iteration, stopping`);
+      return accumulatedText || `[Generation stopped by user]`;
+    }
 
     const response = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
@@ -121,9 +65,10 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
           'Content-Type': 'application/json',
           'x-goog-api-key': apiKey
         },
+        signal,
         body: JSON.stringify({
           contents: currentContents,
-          tools
+          tools,
         })
       }
     );
@@ -143,127 +88,74 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let accumulatedText = "";
+
     let functionCallPart = null;
     let fullModelContent = null;
 
     let lineBuffer = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      const chunk = decoder.decode(value, { stream: true });
-      lineBuffer += chunk;
+        const chunk = decoder.decode(value, { stream: true });
+        lineBuffer += chunk;
 
-      const lines = lineBuffer.split('\n');
-      lineBuffer = lines.pop() || "";
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop() || "";
 
-      for (const line of lines) {
-        const trimmedLine = line.trim();
+        for (const line of lines) {
+          const trimmedLine = line.trim();
 
-        if (!trimmedLine.startsWith('data: '))
-          continue;
-
-        try {
-          const json = JSON.parse(line.substring(6));
-          const candidate = json.candidates?.[0];
-          if (!candidate) {
+          if (!trimmedLine.startsWith('data: '))
             continue;
-          }
 
-          const parts = json.candidates[0].content?.parts || [];
-
-          for (const part of parts) {
-            if (part.functionCall) {
-              functionCallPart = part;
-              fullModelContent = candidate.content;
-            } else if (part.text) {
-              accumulatedText += part.text;
-              if (onChunk) onChunk(part.text);
+          try {
+            const json = JSON.parse(line.substring(6));
+            const candidate = json.candidates?.[0];
+            if (!candidate) {
+              continue;
             }
+
+            const parts = json.candidates[0].content?.parts || [];
+
+            for (const part of parts) {
+              if (part.functionCall) {
+                functionCallPart = part;
+                fullModelContent = candidate.content;
+              } else if (part.text) {
+                accumulatedText += part.text;
+                if (onChunk) onChunk(part.text);
+              }
+            }
+          } catch (e) {
+            console.error("Failed to parse JSON chunk: ", trimmedLine, e);
           }
-        } catch (e) {
-          console.error("Failed to parse JSON chunk: ", trimmedLine, e);
         }
       }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        console.log(`[STREAM] Gemini generation aborted by user`);
+        throw new Error('GENERATION_ABORTED');
+      }
+      throw err;
+    }
+
+    if (signal.aborted) {
+      console.log(`[STREAM] Stream aborted, not processing function calls`);
+      return accumulatedText || `[Generation stopped by user]`;
     }
 
     if (functionCallPart) {
       const functionName = functionCallPart.functionCall.name;
-      let toolResult = "";
+      const args = functionCallPart.functionCall.args || {};
 
-      if (functionName === 'get_selected_text') {
-        const editor = vscode.window.activeTextEditor;
-        toolResult = editor && !editor.selection.isEmpty ? editor.document.getText(editor.selection) : '[NO_SELECTION]';
-        const fileName = editor ? editor.document.fileName : 'none';
-        console.log(`[GEMINI_TOOL] get_selected_text\nresult length: ${toolResult.length} characters`);
-        console.log(`[GEMINI_TOOL] File Name: ${fileName}`)
-      }
-
-      else if (functionName === 'get_current_file') {
-        const editor = vscode.window.activeTextEditor;
-        toolResult = editor ? editor.document.getText() : '[NO_ACTIVE_FILE]';
-        const fileName = editor ? editor.document.fileName : 'none';
-        console.log(`[GEMINI_TOOL] get_current_file\nresult length: ${toolResult.length} characters`);
-        console.log(`[GEMINI_TOOL] File Name: ${fileName}`);
-      }
-
-      else if (functionName === 'get_attached_file') {
-        const fs = require('fs');
-        const { path } = functionCallPart.functionCall.args;
-        console.log(`[GEMINI_TOOL] Reading file from path: ${path}`);
-
-        try {
-          toolResult = fs.readFileSync(path, 'utf8');
-          console.log(`[GEMINI_TOOL] get_attached_file\nresult length: ${toolResult.length} characters`);
-        } catch (error) {
-          toolResult = `Failed to read file at path: ${path}`;
-          console.log(`[GEMINI_TOOL] File read FAILED: ${error.message}`);
-        }
-      }
-
-      else if (functionName === 'apply_code_edits') {
-        if (hasAppliedEdits) {
-          console.log('[GEMINI_TOOL] apply_code_edits SKIPPED - edits already applied');
-          break;
-        }
-
-        hasAppliedEdits = true;
-        const { reason, newText, explanation } = functionCallPart.functionCall.args;
-
-        console.log(`[GEMINI_TOOL] apply_code_edits requested`);
-        console.log(`[GEMINI_TOOL] Reason: ${reason}`);
-        console.log(`[GEMINI_TOOL] New text length: ${newText?.length || 0} characters`);
-
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-          console.log(`[GEMINI_TOOL] apply_code_edits FAILED - no active editor`);
-          break;
-        }
-
-        const confirmation = await vscode.window.showInformationMessage(
-          `AI wants to apply changes:\n\n${reason}`,
-          { modal: true },
-          'Apply',
-          'Cancel'
-        );
-
-        if (confirmation !== 'Apply') {
-          console.log(`[GEMINI_TOOL] apply_code_edits CANCELLED by user`);
-          break;
-        }
-
-        await editor.edit(editBuilder => {
-          const fullRange = new vscode.Range(
-            editor.document.positionAt(0),
-            editor.document.positionAt(editor.document.getText().length)
-          );
-          editBuilder.replace(fullRange, newText);
-        });
-
-        console.log(`[GEMINI_TOOL] apply_code_edits SUCCESS - changes applied`);
-        return `Changes applied successfully.\n\nExplanation:\n${explanation}`;
+      let toolResult;
+      try {
+        toolResult = await toolHandler.execute(functionName, args, console.log);
+      } catch (err) {
+        toolResult = err.message || 'Tool execution failed';
       }
 
       console.log(`[GEMINI_TOOL] Tool ${functionName} completed, continuing conversation...`);
@@ -286,11 +178,13 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
 
       continue;
     }
-
-    return accumulatedText || 'No response from LLM';
   }
 
-  return 'Maximum tool iterations reached';
+  if (accumulatedText.trim()) {
+    return accumulatedText;
+  }
+
+  throw new Error('Maximum tool iterations reached');
 }
 
 async function callGroq(contents, apiKey, tools = []) {
@@ -327,6 +221,7 @@ async function callGroq(contents, apiKey, tools = []) {
 
   while (toolIterations < MAX_TOOL_ITERATIONS) {
     toolIterations++;
+
     if (toolIterations > MAX_TOOL_ITERATIONS) {
       throw new Error('Tool loop exceeded safe limit');
     }
@@ -579,10 +474,9 @@ class AIAssistantViewProvider {
 
             LLM_PROVIDER = message.provider;
 
-            await callLLM(
-              [{ role: 'user', parts: [{ text: 'Say OK' }] }],
-              message.key
-            );
+            if (message.provider === 'Gemini') {
+              await validateGeminiApiKey(message.key);
+            }
             await this.context.secrets.store('LLMApiKey', message.key);
             await this.context.secrets.store('LLMProvider', LLM_PROVIDER);
 
@@ -652,6 +546,14 @@ class AIAssistantViewProvider {
           return;
         }
 
+        case 'stop-generation':
+          if (currentAbortController) {
+            console.log('[UI] Stop Requested');
+            generationWasAborted = true;
+            currentAbortController.abort();
+          }
+          return;
+
         case 'clearChat': {
           conversation = [];
 
@@ -706,6 +608,8 @@ class AIAssistantViewProvider {
           });
         }
 
+        generationWasAborted = false;
+
         const aiResponse = await callLLM(
           LLMContents,
           apiKey,
@@ -718,26 +622,36 @@ class AIAssistantViewProvider {
           }
         );
 
-        conversation.push({
-          role: 'assistant',
-          content: aiResponse
-        });
-
         if (conversation.length > 20) {
           conversation = conversation.slice(-20);
         }
 
-        webviewView.webview.postMessage({
-          type: 'assistantResponse',
-          text: aiResponse
-        });
+        if (!generationWasAborted) {
+          conversation.push({
+            role: 'assistant',
+            content: aiResponse
+          });
+
+          webviewView.webview.postMessage({
+            type: 'assistantResponse',
+            text: aiResponse
+          });
+        }
       } catch (error) {
+        if (
+          error.message === 'GENERATION_ABORTED' ||
+          error.name === 'AbortError' ||
+          error.message?.includes('aborted')
+        ) {
+          console.log(`[STREAM] Generation aborted by user`);
+          return;
+        }
+
         if (error.message === 'QUOTA_EXCEEDED') {
           webviewView.webview.postMessage({
             type: 'assistantResponse',
             text: 'API quota exceeded. Please try again later.'
           });
-
           return;
         }
 

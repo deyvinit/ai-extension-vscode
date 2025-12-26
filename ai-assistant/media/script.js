@@ -3,6 +3,7 @@ const vscode = acquireVsCodeApi();
 window.addEventListener('DOMContentLoaded', () => {
     const chat = document.getElementById('chat');
     const sendBtn = document.getElementById('send');
+    const stopBtn = document.getElementById('stop');
     const clearBtn = document.getElementById('clear-chat');
     const input = document.getElementById('prompt');
     const chatSection = document.getElementById('chat-section');
@@ -42,6 +43,7 @@ window.addEventListener('DOMContentLoaded', () => {
         if (!text) return;
 
         sendBtn.disabled = true;
+        stopBtn.style.display = 'inline-block';
 
         addMessage('user', text);
         addMessage('assistant', 'Thinking...', true);
@@ -57,6 +59,24 @@ window.addEventListener('DOMContentLoaded', () => {
 
         vscode.postMessage(payload);
         input.value = '';
+    });
+
+    stopBtn.addEventListener('click', () => {
+        console.log(`[UI] Stop button clicked`)
+        vscode.postMessage({ type: 'stop-generation' });
+
+        const temp = chat.querySelector('.message.thinking');
+        if (temp) temp.remove();
+
+        if (currentAssistantBubble) {
+            const stoppedMsg = document.createElement('em');
+            stoppedMsg.textContent = ` [Stopped]`;
+            stoppedMsg.style.color = '#888';
+            currentAssistantBubble.appendChild(stoppedMsg);
+            currentAssistantBubble = null;
+        }
+
+        sendBtn.disabled = false;
     });
 
     clearBtn.addEventListener('click', () => {
@@ -199,6 +219,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
         if (message.type === 'assistantResponse') {
             sendBtn.disabled = false;
+            stopBtn.style.display = 'none';
+
             const temp = chat.querySelector('.message.thinking');
             if (temp) {
                 temp.remove();
