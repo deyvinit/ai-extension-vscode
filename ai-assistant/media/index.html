@@ -10,6 +10,14 @@
 <body>
     <section id="api-key-section">
         <h3>API Key</h3>
+        <label for="providerSelect">LLM Provider</label>
+        <select id="providerSelect">
+            <option value="">Select your provider: </option>
+            <option value="Gemini">Gemini</option>
+            <option value="Groq">Groq</option>
+            <option value="OpenAI">OpenAI</option>
+            <option value="Anthropic">Anthropic</option>
+        </select>
         <input
             type="password"
             id="apiKeyInput"

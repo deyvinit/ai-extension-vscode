@@ -74,14 +74,6 @@ const tools = [
   }
 ];
 
-function detectProviderFromKey(apiKey) {
-  if (apiKey.startsWith('AIza')) return 'Gemini';
-  if (apiKey.startsWith('gsk_')) return 'Groq';
-  if (apiKey.startsWith('sk-ant-')) return 'Anthropic';
-  if (apiKey.startsWith('sk-')) return 'OpenAI';
-  return 'unknown';
-}
-
 let conversation = [];
 
 let hasAppliedEdits = false;
@@ -251,7 +243,7 @@ async function callGemini(contents, apiKey, tools = []) {
 
       hasAppliedEdits = true;
 
-      const { reason, newText } = functionCallPart.functionCall.args;
+      const { reason, newText, explanation } = functionCallPart.functionCall.args;
 
       console.log('Proposed editor edits: ', reason);
 
@@ -294,7 +286,7 @@ async function callGemini(contents, apiKey, tools = []) {
         }
       ];
 
-      return 'Changes applied successfully.'
+      return `Changes applied successfully.\n\nExplanation:\n${explanation}`;
     }
 
     const followUpResponse = await fetch(
@@ -602,11 +594,11 @@ class AIAssistantViewProvider {
         case 'saveApiKey': {
           try {
 
-            LLM_PROVIDER = detectProviderFromKey(message.key);
-
-            if (LLM_PROVIDER === 'unknown') {
-              throw new Error('UNKNOWN PROVIDER');
+            if (!message.provider) {
+              throw new Error('NO_PROVIDER_SELECTED');
             }
+
+            LLM_PROVIDER = message.provider;
 
             await callLLM(
               [{ role: 'user', parts: [{ text: 'Say OK' }] }],
@@ -636,6 +628,11 @@ class AIAssistantViewProvider {
               webviewView.webview.postMessage({
                 type: 'apiKeyInvalid',
                 error: 'Could not detect LLM provider from API key. Please recheck the key.'
+              });
+            } else if (err.message === 'NO_PROVIDER_SELECTED') {
+              webviewView.webview.postMessage({
+                type: 'apiKeyInvalid',
+                error: 'Please select an LLM provider before saving the key.'
               });
             } else {
               webviewView.webview.postMessage({

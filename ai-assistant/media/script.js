@@ -13,7 +13,9 @@ window.addEventListener('DOMContentLoaded', () => {
     const attachFileBtn = document.getElementById('attachFileBtn');
     const attachedFileName = document.getElementById('attachedFileName');
     const removeFileBtn = document.getElementById('removeFileBtn');
+    const providerSelect = document.getElementById('providerSelect');
     let attachedFile = null;
+    removeFileBtn.style.display = 'none';
 
     function setChatEnabled(enabled) {
         chatSection.style.opacity = enabled ? '1' : '0.5';
@@ -53,9 +55,6 @@ window.addEventListener('DOMContentLoaded', () => {
         }
 
         vscode.postMessage(payload);
-
-        attachedFile = null;
-        attachedFileName.textContent = '';
         input.value = '';
     });
 
@@ -73,9 +72,17 @@ window.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        const provider = providerSelect.value;
+
+        if (!provider) {
+            keyStatus.textContent = 'Please select an LLM Provider.';
+            return;
+        }
+
         vscode.postMessage({
             type: 'saveApiKey',
-            key
+            key,
+            provider
         });
     });
 
@@ -110,6 +117,7 @@ window.addEventListener('DOMContentLoaded', () => {
     removeFileBtn.addEventListener('click', () => {
         attachedFile = null;
         attachedFileName.textContent = '';
+        removeFileBtn.style.display = 'none';
 
         vscode.postMessage({
             type: 'removeAttachedFile'
@@ -139,8 +147,10 @@ window.addEventListener('DOMContentLoaded', () => {
             const providerLabel = message.provider
                 ? `${message.provider} API Key saved!`
                 : 'API key saved!';
+
             keyStatus.textContent = providerLabel;
             apiKeyInput.value = '';
+            providerSelect.value = '';
             setChatEnabled(true);
             return;
         }
@@ -154,6 +164,7 @@ window.addEventListener('DOMContentLoaded', () => {
         if (message.type === 'apiKeyRemoved') {
             keyStatus.textContent = 'API key removed.';
             apiKeyInput.value = '';
+            providerSelect.value = '';
             setChatEnabled(false);
             return;
         }
@@ -163,6 +174,7 @@ window.addEventListener('DOMContentLoaded', () => {
             if (attachedFileName) {
                 attachedFileName.textContent = `Attached: ${message.file.name}`;
             }
+            removeFileBtn.style.display = 'inline-block';
             return;
         }
 
