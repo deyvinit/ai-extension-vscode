@@ -14,6 +14,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const attachedFileName = document.getElementById('attachedFileName');
     const removeFileBtn = document.getElementById('removeFileBtn');
     const providerSelect = document.getElementById('providerSelect');
+    let currentAssistantBubble = null;
     let attachedFile = null;
     removeFileBtn.style.display = 'none';
 
@@ -127,6 +128,24 @@ window.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('message', (event) => {
         const message = event.data;
 
+        if (message.type === 'assistantChunk') {
+            const temp = chat.querySelector('.message.thinking');
+            if (temp) temp.remove();
+
+            if (!currentAssistantBubble) {
+                currentAssistantBubble = document.createElement('div');
+                currentAssistantBubble.className = 'message assistant';
+                chat.appendChild(currentAssistantBubble);
+            }
+
+            const chunkSpan = document.createElement('span');
+            chunkSpan.innerText = message.text;
+            currentAssistantBubble.appendChild(chunkSpan);
+
+            chat.scrollTop = chat.scrollHeight;
+            return;
+        }
+
         if (message.type === 'apiKeyStatus') {
             if (message.hasKey) {
                 const providerLabel = message.provider
@@ -185,7 +204,14 @@ window.addEventListener('DOMContentLoaded', () => {
                 temp.remove();
             }
 
-            addMessage('assistant', message.text);
+            if (currentAssistantBubble) {
+                currentAssistantBubble.innerHTML = renderMarkdown(message.text);
+            } else {
+                addMessage('assistant', message.text);
+            }
+
+            currentAssistantBubble = null;
+            return;
         }
 
         if (message.type === 'chatCleared') {
