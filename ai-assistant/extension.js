@@ -8,7 +8,84 @@ let generationWasAborted = false;
 let currentAbortController = null;
 let conversation = [];
 
+let activeDiffDisposables = [];
+
 const tools = getAllTools();
+
+async function openDiffPreview(originalDoc, newText) {
+  const originalUri = originalDoc.uri;
+
+  const timestamp = Date.now();
+  const previewUri = vscode.Uri.parse(
+    `ai-preview:${originalUri.path}.ai-preview-${timestamp}`
+  );
+
+  const provider = {
+    provideTextDocumentContent: () => newText
+  };
+
+  const registration = vscode.workspace.registerTextDocumentContentProvider(
+    'ai-preview',
+    provider
+  );
+
+  activeDiffDisposables.push(registration);
+
+  await vscode.commands.executeCommand(
+    'vscode.diff',
+    originalUri,
+    previewUri,
+    `AI Suggested Changes: ${originalUri.fsPath.split('/').pop()}`
+  );
+
+  const messageItems = [
+    { title: 'Apply Changes', action: 'accept' },
+    { title: 'Reject', action: 'reject' }
+  ];
+
+  const choice = await vscode.window.showInformationMessage(
+    'AI has proposed edits in a new window.',
+    { modal: false },
+    ...messageItems
+  );
+
+  const cleanup = async () => {
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+
+    registration.dispose();
+
+    const index = activeDiffDisposables.indexOf(registration);
+    if (index > -1) {
+      activeDiffDisposables.splice(index, 1);
+    }
+  };
+
+  if (choice?.action === 'accept') {
+    await cleanup();
+    return true;
+  } else {
+    await cleanup();
+    return false;
+  }
+}
+
+async function applyChanges(editor, newText) {
+  const success = await editor.edit(editBuilder => {
+    const fullRange = new vscode.Range(
+      editor.document.positionAt(0),
+      editor.document.positionAt(editor.document.getText().length)
+    );
+    editBuilder.replace(fullRange, newText);
+  });
+
+  if (success) {
+    vscode.window.showInformationMessage('Changes applied successfully');
+  } else {
+    vscode.window.showErrorMessage('Failed to apply changes');
+  }
+
+  return success;
+}
 
 async function callGemini(contents, apiKey, tools = [], onChunk = null) {
   const toolHandler = new ToolHandler();
@@ -152,10 +229,43 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
       const args = functionCallPart.functionCall.args || {};
 
       let toolResult;
-      try {
-        toolResult = await toolHandler.execute(functionName, args, console.log);
-      } catch (err) {
-        toolResult = err.message || 'Tool execution failed';
+
+      if (functionName === 'apply_code_edits') {
+        const { reason, newText, explanation } = args;
+        const editor = vscode.window.activeTextEditor;
+
+        if (!editor || !newText) {
+          toolResult = '[NO_ACTIVE_EDITOR_OR_EMPTY_EDIT]';
+        } else {
+          const userAccepted = await openDiffPreview(
+            editor.document,
+            newText,
+            reason,
+            explanation
+          );
+
+          if (userAccepted) {
+            const currentEditor = vscode.window.activeTextEditor;
+
+            if (!currentEditor || currentEditor.document.uri.toString() !== editor.document.uri.toString()) {
+              const doc = await vscode.workspace.openTextDocument(editor.document.uri);
+              const reopenedEditor = await vscode.window.showTextDocument(doc);
+              await applyChanges(reopenedEditor, newText);
+            } else {
+              await applyChanges(currentEditor, newText);
+            }
+
+            toolResult = `Changes applied successfully.\n\nExplanation:\n${explanation || 'No explanation provided.'}`;
+          } else {
+            toolResult = 'User rejected the proposed edits.';
+          }
+        }
+      } else {
+        try {
+          toolResult = await toolHandler.execute(functionName, args, console.log);
+        } catch (err) {
+          toolResult = err.message || 'Tool execution failed';
+        }
       }
 
       console.log(`[GEMINI_TOOL] Tool ${functionName} completed, continuing conversation...`);
@@ -393,20 +503,29 @@ async function callGroq(contents, apiKey, tools = []) {
           continue;
         }
 
-        const confirmation = await vscode.window.showInformationMessage(
-          `AI wants to apply the following changes:\n\n${reason}`,
-          { modal: true },
-          'Apply',
-          'Cancel'
+        const userAccepted = await openDiffPreview(
+          editor.document,
+          newText,
+          reason,
+          explanation
         );
 
-        if (confirmation === 'Apply') {
-          await editor.edit(editBuilder => {
-            const fullRange = new vscode.Range(
-              editor.document.positionAt(0),
-              editor.document.positionAt(editor.document.getText().length)
-            );
-            editBuilder.replace(fullRange, newText);
+        if (userAccepted) {
+          const currentEditor = vscode.window.activeTextEditor;
+
+          if (!currentEditor || currentEditor.document.uri.toString() !== editor.document.uri.toString()) {
+            const doc = await vscode.workspace.openTextDocument(editor.document.uri);
+            const reopenedEditor = await vscode.window.showTextDocument(doc);
+            await applyChanges(reopenedEditor, newText);
+          } else {
+            await applyChanges(currentEditor, newText);
+          }
+
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            name: 'apply_code_edits',
+            content: `Changes applied successfully.\n\nExplanation:\n${explanation || 'No explanation provided.'}`
           });
 
           return `Changes applied successfully.\n\nExplanation:\n${explanation}`;
@@ -434,6 +553,7 @@ async function callLLM(contents, apiKey, tools = [], onChunk = null) {
   }
   throw new Error(`Unsupported LLM provider: ${LLM_PROVIDER}`);
 }
+
 class AIAssistantViewProvider {
   static viewType = 'aiAssistant.sidebar';
 
@@ -696,10 +816,18 @@ function activate(context) {
   console.log('AI Assistant sidebar activated');
 }
 
-function deactivate() { }
+function deactivate() {
+  activeDiffDisposables.forEach(disposable => {
+    try {
+      disposable.dispose();
+    } catch (err) {
+      console.error('Error disposing diff view:', err);
+    }
+  });
+  activeDiffDisposables = [];
+}
 
 module.exports = {
   activate,
   deactivate
 };
-
