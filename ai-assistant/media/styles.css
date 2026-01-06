@@ -83,6 +83,7 @@ button:disabled {
     line-height: 1.4;
     white-space: pre-wrap;
     word-wrap: break-word;
+    overflow-wrap: break-word;
     overflow: visible;
     max-height: none;
 }
@@ -145,13 +146,22 @@ hr {
     border-radius: 6px;
     margin-top: 6px;
     overflow-x: auto;
-    overflow-y: visible;
-    max-height: none;
+    max-width: 100%;
 }
 
 .message code {
-    font-family: monospace;
+    font-family: 'Courier New', Consolas, monospace;
     font-size: 12px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    display: block;
+}
+
+.message :not(pre)>code {
+    display: inline;
+    background-color: #2d2d2d;
+    padding: 2px 4px;
+    border-radius: 3px;
 }
 
 #attachment-bar {
@@ -178,4 +188,152 @@ hr {
 #stop-btn:not(:disabled) {
     opacity: 1;
     cursor: pointer;
+}
+
+.code-block-wrapper {
+    position: relative;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.code-block-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #252526;
+    padding: 6px 10px;
+    border-radius: 6px 6px 0 0;
+    border-bottom: 1px solid #333;
+}
+
+.code-language {
+    font-size: 11px;
+    color: #858585;
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.copy-code-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    margin: 0;
+    background-color: #3a3a3a;
+    border: 1px solid #555;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 11px;
+    color: #cccccc;
+}
+
+.copy-code-btn:hover {
+    background-color: #4a4a4a;
+    border-color: #666;
+}
+
+.copy-code-btn.copied {
+    background-color: #0e639c;
+    border-color: #0e639c;
+}
+
+.copy-icon {
+    font-size: 12px;
+}
+
+.copy-text {
+    font-size: 11px;
+    font-weight: 500;
+}
+
+/* Update existing pre style */
+.code-block-wrapper pre {
+    background-color: #1e1e1e;
+    padding: 12px;
+    border-radius: 0 0 6px 6px;
+    margin: 0;
+    overflow-x: auto;
+    max-width: 100%;
+}
+
+.regen-indicator {
+    font-size: 11px;
+    opacity: 0.6;
+    margin-top: 4px;
+    user-select: none;
+}
+
+#regenerate {
+    transition: opacity 0.15s ease;
+}
+
+.regen-btn-inline {
+    margin: 0;
+    height: 22px;
+    min-width: 22px;
+    font-size: 12px;
+    padding: 0 6px;
+    background-color: #3a3a3a;
+    border: 1px solid #555;
+    color: #ccc;
+    cursor: pointer;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.regen-btn-inline:hover {
+    background-color: #3a3a3a;
+    color: #fff;
+}
+
+.message-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid #3a3a3a;
+}
+
+.version-navigator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.version-btn {
+    padding: 2px 6px;
+    margin: 0;
+    font-size: 12px;
+    background-color: #3a3a3a;
+    border: 1px solid #555;
+    color: #ccc;
+    cursor: pointer;
+    border-radius: 3px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.version-btn:hover:not(:disabled) {
+    background-color: #4a4a4a;
+    border-color: #666;
+}
+
+.version-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.version-label {
+    font-size: 11px;
+    color: #888;
+    user-select: none;
+    min-width: 35px;
+    text-align: center;
 }

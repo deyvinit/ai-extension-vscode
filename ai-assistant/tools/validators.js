@@ -15,7 +15,7 @@ async function validateGeminiApiKey(apiKey) {
 
     if (!response.ok) {
         if (response.status === 429) throw new Error('QUOTA_EXCEEDED');
-        if (response.status === 429) throw new Error('SERVICE_OVERLOADED');
+        if (response.status === 503) throw new Error('SERVICE_OVERLOADED');
         throw new Error('API_KEY_INVALID');
     }
 

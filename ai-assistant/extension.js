@@ -104,20 +104,20 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
         parts: [{
           text: `You are an expert IDE code assistant operating inside a VS Code editor. You help users understand, analyze, and modify code.
 
-          CAPABILITIES:
-          - Analyze and explain code in detail
-          - Answer questions about code functionality
-          - Provide code examples and best practices
-          - Suggest improvements and optimizations
-          - Help debug and fix issues
-          - ONLY modify code when explicitly requested by the user
+        CAPABILITIES:
+        - Analyze and explain code in detail
+        - Answer questions about code functionality
+        - Provide code examples and best practices in the chat
+        - Suggest improvements and optimizations
+        - Help debug and fix issues
+        - Modify code in the editor ONLY when the user explicitly says "apply" or "make changes to the file"
 
-          When users ask you to analyze or explain code, provide detailed, helpful responses. You have full capability to understand and explain code logic, patterns, and functionality.`
+        IMPORTANT: When users ask you to "write", "create", or "generate" code, show it in the chat with code blocks. Only use the apply_code_edits tool when the user explicitly asks to modify the currently open file.`
         }]
       },
       {
         role: 'model',
-        parts: [{ text: 'Understood. I will help analyze, explain, and work with code as requested.' }]
+        parts: [{ text: 'Understood. I will show code examples in the chat unless explicitly asked to modify the active file.' }]
       },
       ...currentContents
     ];
@@ -128,6 +128,9 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
 
   while (toolIterations < MAX_TOOL_ITERATIONS) {
     toolIterations++;
+
+    let functionCallPart = null;
+    let fullModelContent = null;
 
     if (signal.aborted) {
       console.log(`[STREAM] Aborted at start of iteration, stopping`);
@@ -145,7 +148,7 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
         signal,
         body: JSON.stringify({
           contents: currentContents,
-          tools,
+          ...(tools.length > 0 ? { tools } : {})
         })
       }
     );
@@ -165,9 +168,6 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-
-    let functionCallPart = null;
-    let fullModelContent = null;
 
     let lineBuffer = "";
 
@@ -288,6 +288,8 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
 
       continue;
     }
+
+    break;
   }
 
   if (accumulatedText.trim()) {
@@ -554,6 +556,96 @@ async function callLLM(contents, apiKey, tools = [], onChunk = null) {
   throw new Error(`Unsupported LLM provider: ${LLM_PROVIDER}`);
 }
 
+async function generateAssistantResponse({
+  webview,
+  apiKey,
+  tools,
+  isRegenerate = false,
+  existingVersions = null
+}) {
+  const LLMContents = conversation.map(turn => {
+    if (turn.role === 'assistant') {
+      const active = turn.versions[turn.activeVersionIndex];
+      return {
+        role: 'model',
+        parts: [{ text: active.content }]
+      };
+    }
+
+    return {
+      role: 'user',
+      parts: [{ text: turn.content }]
+    };
+  });
+
+  const effectiveTools = isRegenerate ? [] : tools;
+
+  generationWasAborted = false;
+
+  const aiResponse = await callLLM(
+    LLMContents,
+    apiKey,
+    effectiveTools,
+    chunk => {
+      webview.postMessage({
+        type: 'assistantChunk',
+        text: chunk,
+        conversationIndex: conversation.length
+      });
+    }
+  );
+
+  if (!generationWasAborted) {
+    const lastTurn = conversation[conversation.length - 1];
+
+    if (lastTurn && lastTurn.role === 'assistant') {
+      lastTurn.versions.push({
+        id: `v${lastTurn.versions.length + 1}`,
+        content: aiResponse,
+        createdAt: Date.now(),
+        metadata: { regenerated: true }
+      });
+      lastTurn.activeVersionIndex = lastTurn.versions.length - 1;
+    } else {
+
+      const versions = existingVersions ? [
+        ...existingVersions,
+        {
+          id: `v${existingVersions.length + 1}`,
+          content: aiResponse,
+          createdAt: Date.now(),
+          metadata: { regenerated: true }
+        }
+      ] : [
+        {
+          id: 'v1',
+          content: aiResponse,
+          createdAt: Date.now(),
+          metadata: { regenerated: false }
+        }
+      ];
+
+      conversation.push({
+        role: 'assistant',
+        versions: versions,
+        activeVersionIndex: versions.length - 1
+      });
+    }
+
+    const lastAssistant = conversation[conversation.length - 1];
+    const conversationIndex = conversation.length - 1;
+
+    webview.postMessage({
+      type: 'streamComplete',
+      conversationIndex: conversationIndex,
+      versionInfo: {
+        current: lastAssistant.activeVersionIndex + 1,
+        total: lastAssistant.versions.length
+      }
+    });
+  }
+}
+
 class AIAssistantViewProvider {
   static viewType = 'aiAssistant.sidebar';
 
@@ -683,6 +775,106 @@ class AIAssistantViewProvider {
           return;
         }
 
+        case 'regenerateLast': {
+          if (conversation.length === 0) return;
+
+          const apiKey = await this.context.secrets.get('LLMApiKey');
+          if (!apiKey) return;
+
+          try {
+            await generateAssistantResponse({
+              webview: webviewView.webview,
+              apiKey,
+              tools,
+              isRegenerate: true
+            });
+          } catch (error) {
+            webviewView.webview.postMessage({
+              type: 'assistantResponse',
+              text: 'Error regenerating response: ' + error.message
+            });
+          }
+
+          return;
+        }
+
+        case 'regenerateAt': {
+          const index = message.conversationIndex;
+
+          if (typeof index !== 'number' || index < 0 || index >= conversation.length) {
+            console.error('[regenerateAt] Invalid conversation index: ', index);
+            return;
+          }
+
+          const turn = conversation[index];
+          if (!turn || turn.role !== 'assistant') {
+            console.error('[regenerateAt] Turn at index is not an assistant: ', turn);
+            return;
+          }
+
+          const apiKey = await this.context.secrets.get('LLMApiKey');
+          if (!apiKey) return;
+
+          const existingVersions = turn.versions;
+
+          conversation = conversation.slice(0, index);
+
+          try {
+            await generateAssistantResponse({
+              webview: webviewView.webview,
+              apiKey,
+              tools,
+              isRegenerate: true,
+              existingVersions: existingVersions
+            });
+          } catch (error) {
+            if (
+              error.message === 'GENERATION_ABORTED' ||
+              error.name === 'AbortError' ||
+              error.message?.includes('aborted')
+            ) {
+              console.log(`[STREAM] Generation aborted by user`);
+              return;
+            }
+
+            webviewView.webview.postMessage({
+              type: 'assistantResponse',
+              text: 'Error regenerating response: ' + error.message
+            });
+          }
+
+          return;
+        }
+
+        case 'switchVersion': {
+          const index = message.conversationIndex;
+          const versionIndex = message.versionIndex;
+
+          if (typeof index !== 'number' || index < 0 || index >= conversation.length) {
+            return;
+          }
+
+          const turn = conversation[index];
+          if (!turn || turn.role !== 'assistant') {
+            return;
+          }
+
+          turn.activeVersionIndex = versionIndex;
+
+          const version = turn.versions[versionIndex];
+          webviewView.webview.postMessage({
+            type: 'versionSwitched',
+            conversationIndex: index,
+            content: version.content,
+            versionInfo: {
+              current: versionIndex + 1,
+              total: turn.versions.length
+            }
+          });
+
+          return;
+        }
+
         case 'userPrompt':
           break;
 
@@ -697,6 +889,13 @@ class AIAssistantViewProvider {
       const finalPrompt = message.text;
 
       const attachedFile = message.attachedFile || null;
+
+      if (attachedFile && attachedFile.path) {
+        conversation.push({
+          role: 'user',
+          content: `User has attached a file at path: ${attachedFile.path}`
+        });
+      }
 
       conversation.push({
         role: 'user',
@@ -714,48 +913,15 @@ class AIAssistantViewProvider {
       }
 
       try {
-        const LLMContents = conversation.map(turn => ({
-          role: turn.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: turn.content }]
-        }));
-
-        if (attachedFile?.path) {
-          LLMContents.push({
-            role: 'user',
-            parts: [{
-              text: `User has attached a file at path: ${attachedFile.path}`
-            }]
-          });
-        }
-
-        generationWasAborted = false;
-
-        const aiResponse = await callLLM(
-          LLMContents,
+        await generateAssistantResponse({
+          webview: webviewView.webview,
           apiKey,
           tools,
-          (chunk) => {
-            webviewView.webview.postMessage({
-              type: 'assistantChunk',
-              text: chunk
-            });
-          }
-        );
+          isRegenerate: false
+        });
 
         if (conversation.length > 20) {
           conversation = conversation.slice(-20);
-        }
-
-        if (!generationWasAborted) {
-          conversation.push({
-            role: 'assistant',
-            content: aiResponse
-          });
-
-          webviewView.webview.postMessage({
-            type: 'assistantResponse',
-            text: aiResponse
-          });
         }
       } catch (error) {
         if (
