@@ -11,33 +11,76 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 </head>
 <body>
-    <section id="api-key-section">
-        <h3>API Key</h3>
-        <label for="providerSelect">LLM Provider</label>
-        <select id="providerSelect">
-            <option value="">Select your provider: </option>
-            <option value="Gemini">Gemini</option>
-            <option value="Groq">Groq</option>
-            <option value="OpenAI">OpenAI</option>
-            <option value="Anthropic">Anthropic</option>
-        </select>
-        <input
-            type="password"
-            id="apiKeyInput"
-            placeholder="Paste your API key here"
-        />
-        <div>
-            <button id="saveKeyBtn">Save / Update</button>
-            <button id="removeKeyBtn">Remove</button>
+    <!-- Settings Panel Overlay -->
+    <div id="settings-overlay" class="settings-overlay" style="display: none;">
+        <div class="settings-panel">
+            <div class="settings-header">
+                <h2>Settings</h2>
+                <button id="closeSettings" class="close-settings-btn">✕</button>
+            </div>
+
+            <div class="settings-content">
+                <!-- API Key Section -->
+                <section class="settings-section">
+                    <h3>API Configuration</h3>
+                    <label for="providerSelect">LLM Provider</label>
+                    <select id="providerSelect">
+                        <option value="">Select your provider</option>
+                        <option value="Gemini">Gemini</option>
+                        <option value="Groq">Groq</option>
+                        <option value="OpenAI">OpenAI</option>
+                        <option value="Anthropic">Anthropic</option>
+                    </select>
+                    <input
+                        type="password"
+                        id="apiKeyInput"
+                        placeholder="Paste your API key here"
+                    />
+                    <div class="button-group">
+                        <button id="saveKeyBtn">Save / Update</button>
+                        <button id="removeKeyBtn" class="secondary-btn">Remove</button>
+                    </div>
+                    <div id="keyStatus"></div>
+                </section>
+
+                <hr />
+
+                <!-- Chat Management Section -->
+                <section class="settings-section">
+                    <h3>Chat Management</h3>
+                    <div class="chat-list-header">
+                        <span class="chat-count">0 chats</span>
+                        <button id="newChatBtn" class="primary-btn">+ New Chat</button>
+                    </div>
+                    <div class="chat-search">
+                        <input
+                            type="text"
+                            id="chatSearchInput"
+                            placeholder="Search chats..."
+                        />
+                    </div>
+                    <div id="chatList" class="chat-list">
+                        <!-- Chat items will be dynamically added here -->
+                    </div>
+                </section>
+            </div>
         </div>
-        <div id="keyStatus"></div>
-    </section>
-    <hr />
+    </div>
+
+    <!-- Main Chat Interface -->
     <section id="chat-section">
-        <h2>AI Assistant</h2>
+        <div class="chat-header">
+            <div class="chat-title-container">
+                <h2 id="currentChatTitle">New Chat</h2>
+                <button id="renameChatBtn" class="icon-btn" title="Rename chat">✏️</button>
+            </div>
+            <button id="openSettings" class="icon-btn settings-btn" title="Settings">⚙</button>
+        </div>
+
         <div id="chat-container">
             <div id="chat"></div>
         </div>
+
         <div id="chat-input">
             <div id="attachment-bar">
                 <button id="attachFileBtn">Attach File</button>
@@ -48,7 +91,7 @@
             <div>
                 <button id="send">Send</button>
                 <button id="stop" style="display: none;">Stop</button>
-                <button id="clear-chat">Clear</button>
+                <button id="clear-chat" class="secondary-btn">Clear</button>
             </div>
         </div>
     </section>

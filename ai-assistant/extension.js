@@ -6,7 +6,106 @@ const { getAllTools } = require('./tools/definitions');
 let LLM_PROVIDER = null;
 let generationWasAborted = false;
 let currentAbortController = null;
-let conversation = [];
+
+let chats = [];
+let currentChatId = null;
+
+const SYSTEM_PROMPT = `
+You are an expert IDE code assistant operating inside a code editor.
+
+STRICT RULES:
+1. NEVER modify code unless the user explicitly asks to write, add, fix, refactor, or change code.
+2. BEFORE calling apply_code_edits, you MUST read context using get_current_file or get_selected_text.
+3. apply_code_edits MUST:
+   - Preserve the programming language of the file
+   - Return the FULL updated file content (not partial snippets)
+   - Make minimal, necessary changes only
+4. When calling apply_code_edits, you MUST include:
+   - a clear reason
+   - a clear explanation of what changed and why
+5. If no meaningful fix is possible, DO NOT call apply_code_edits. Explain instead.
+6. Never replace the file with placeholders, summaries, or generic text.
+
+Violation of these rules is considered an error.
+`.trim();
+
+function generateChatId() {
+  return `chat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function getCurrentChat() {
+  return chats.find(c => c.id === currentChatId);
+}
+
+function createNewChat() {
+  const chat = {
+    id: generateChatId(),
+    title: 'New Chat',
+    conversation: [],
+    createdAt: Date.now(),
+    lastModified: Date.now(),
+    isPinned: false,
+    isArchived: false,
+    attachedFiles: []
+  };
+
+  chats.unshift(chat);
+  currentChatId = chat.id;
+  return chat;
+}
+
+function getChatPreview(conversation) {
+  if (conversation.length === 0) return '';
+  const firstUserMsg = conversation.find(msg => msg.role === 'user');
+  if (!firstUserMsg) return '';
+  return firstUserMsg.content.substring(0, 60);
+}
+
+function getChatList() {
+  return chats.map(chat => ({
+    id: chat.id,
+    title: chat.title,
+    preview: getChatPreview(chat.conversation),
+    createdAt: chat.createdAt,
+    lastModified: chat.lastModified,
+    isPinned: chat.isPinned,
+    messageCount: chat.conversation.length
+  }));
+}
+
+function buildRequestContents(conversation) {
+  return [
+    {
+      role: 'user',
+      parts: [{ text: SYSTEM_PROMPT }]
+    },
+    ...conversation
+  ];
+}
+
+function estimateTokens(text) {
+  return Math.ceil(text.length / 4);
+}
+
+function trimConversationToTokenLimit(conversation, maxTokens) {
+  let totalTokens = 0;
+  const trimmed = [];
+
+  for (let i = conversation.length - 1; i >= 0; i--) {
+    const msg = conversation[i];
+    const text = msg.parts?.[0]?.text || '';
+    const tokens = estimateTokens(text);
+
+    if (totalTokens + tokens > maxTokens) {
+      break;
+    }
+
+    totalTokens += tokens;
+    trimmed.unshift(msg);
+  }
+
+  return trimmed;
+}
 
 const tools = getAllTools();
 
@@ -17,34 +116,10 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
   let toolIterations = 0;
   const MAX_TOOL_ITERATIONS = 5;
 
-  let currentContents = contents;
+  const MAX_CONTEXT_TOKENS = 12_000;
+  const trimmedConversation = trimConversationToTokenLimit(contents, MAX_CONTEXT_TOKENS);
+  let currentContents = buildRequestContents(trimmedConversation);
   let accumulatedText = "";
-
-  if (currentContents.length > 0 && currentContents[0].role === 'user' && !currentContents[0].parts[0].text.includes('You are an expert IDE code assistant')) {
-    currentContents = [
-      {
-        role: 'user',
-        parts: [{
-          text: `You are an expert IDE code assistant operating inside a VS Code editor. You help users understand, analyze, and modify code.
-
-        CAPABILITIES:
-        - Analyze and explain code in detail
-        - Answer questions about code functionality
-        - Provide code examples and best practices in the chat
-        - Suggest improvements and optimizations
-        - Help debug and fix issues
-        - Modify code in the editor ONLY when the user explicitly says "apply" or "make changes to the file"
-
-        IMPORTANT: When users ask you to "write", "create", or "generate" code, show it in the chat with code blocks. Only use the apply_code_edits tool when the user explicitly asks to modify the currently open file.`
-        }]
-      },
-      {
-        role: 'model',
-        parts: [{ text: 'Understood. I will show code examples in the chat unless explicitly asked to modify the active file.' }]
-      },
-      ...currentContents
-    ];
-  }
 
   currentAbortController = new AbortController();
   const { signal } = currentAbortController;
@@ -161,8 +236,8 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
 
       console.log(`[GEMINI_TOOL] Tool ${functionName} completed, continuing conversation...`);
 
-      currentContents = [
-        ...currentContents,
+      const nextConversation = [
+        ...currentContents.slice(1),
         fullModelContent,
         {
           role: 'user',
@@ -176,6 +251,10 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
           ]
         }
       ];
+
+      const trimmedNextConversation = trimConversationToTokenLimit(nextConversation, MAX_CONTEXT_TOKENS);
+
+      currentContents = buildRequestContents(trimmedNextConversation);
 
       continue;
     }
@@ -191,7 +270,6 @@ async function callGemini(contents, apiKey, tools = [], onChunk = null) {
 }
 
 async function callGroq() {
-  // Placeholder for future implementation
   return 'Support for Groq is not enabled yet.';
 }
 
@@ -210,9 +288,17 @@ async function generateAssistantResponse({
   webview,
   apiKey,
   tools,
+  chatId,
   isRegenerate = false,
   existingVersions = null
 }) {
+  const chat = chats.find(c => c.id === chatId);
+  if (!chat) {
+    throw new Error('Chat not found');
+  }
+
+  const conversation = chat.conversation;
+
   const LLMContents = conversation.map(turn => {
     if (turn.role === 'assistant') {
       const active = turn.versions[turn.activeVersionIndex];
@@ -257,7 +343,6 @@ async function generateAssistantResponse({
       });
       lastTurn.activeVersionIndex = lastTurn.versions.length - 1;
     } else {
-
       const versions = existingVersions ? [
         ...existingVersions,
         {
@@ -284,6 +369,13 @@ async function generateAssistantResponse({
 
     const lastAssistant = conversation[conversation.length - 1];
     const conversationIndex = conversation.length - 1;
+
+    chat.lastModified = Date.now();
+
+    if (conversation.length === 2 && chat.title === 'New Chat') {
+      const firstUserMsg = conversation[0].content;
+      chat.title = firstUserMsg.substring(0, 40) + (firstUserMsg.length > 40 ? '...' : '');
+    }
 
     webview.postMessage({
       type: 'streamComplete',
@@ -327,9 +419,160 @@ class AIAssistantViewProvider {
           return;
         }
 
+        case 'loadChats': {
+          webviewView.webview.postMessage({
+            type: 'chatsLoaded',
+            chats: getChatList()
+          });
+          return;
+        }
+
+        case 'createNewChat': {
+          const newChat = createNewChat();
+          webviewView.webview.postMessage({
+            type: 'chatCreated',
+            chat: {
+              id: newChat.id,
+              title: newChat.title,
+              preview: '',
+              createdAt: newChat.createdAt,
+              lastModified: newChat.lastModified,
+              isPinned: false,
+              messageCount: 0
+            }
+          });
+          return;
+        }
+
+        case 'switchChat': {
+          const chat = chats.find(c => c.id === message.chatId);
+          if (chat) {
+            currentChatId = message.chatId;
+            webviewView.webview.postMessage({
+              type: 'chatSwitched',
+              chatId: chat.id,
+              title: chat.title,
+              conversation: chat.conversation
+            });
+          }
+          return;
+        }
+
+        case 'deleteChat': {
+          chats = chats.filter(c => c.id !== message.chatId);
+          webviewView.webview.postMessage({
+            type: 'chatDeleted',
+            chatId: message.chatId
+          });
+
+          if (currentChatId === message.chatId) {
+            if (chats.length > 0) {
+              const nextChat = chats[0];
+              currentChatId = nextChat.id;
+              webviewView.webview.postMessage({
+                type: 'chatSwitched',
+                chatId: nextChat.id,
+                title: nextChat.title,
+                conversation: nextChat.conversation
+              });
+            } else {
+              currentChatId = null;
+            }
+          }
+          return;
+        }
+
+        case 'requestDeleteConfirmation': {
+          const answer = await vscode.window.showWarningMessage(
+            'Are you sure you want to delete this chat?',
+            { modal: true },
+            'Delete',
+            'Cancel'
+          );
+
+          if (answer === 'Delete') {
+            chats = chats.filter(c => c.id !== message.chatId);
+            webviewView.webview.postMessage({
+              type: 'chatDeleted',
+              chatId: message.chatId
+            });
+
+            if (currentChatId === message.chatId) {
+              if (chats.length > 0) {
+                const nextChat = chats[0];
+                currentChatId = nextChat.id;
+                webviewView.webview.postMessage({
+                  type: 'chatSwitched',
+                  chatId: nextChat.id,
+                  title: nextChat.title,
+                  conversation: nextChat.conversation
+                });
+              } else {
+                currentChatId = null;
+              }
+            }
+          }
+          return;
+        }
+
+        case 'renameChat': {
+          const chat = chats.find(c => c.id === message.chatId);
+          if (chat) {
+            chat.title = message.title;
+            chat.lastModified = Date.now();
+            webviewView.webview.postMessage({
+              type: 'chatRenamed',
+              chatId: message.chatId,
+              title: message.title
+            });
+          }
+          return;
+        }
+
+        // case 'requestRename': {
+        //   const result = await vscode.window.showInputBox({
+        //     prompt: 'Enter new chat title',
+        //     value: message.currentTitle,
+        //     placeHolder: 'Chat title'
+        //   });
+
+        //   if (result && result.trim()) {
+        //     const chat = chats.find(c => c.id === message.chatId);
+        //     if (chat) {
+        //       chat.title = result.trim();
+        //       chat.lastModified = Date.now();
+        //       webviewView.webview.postMessage({
+        //         type: 'chatRenamed',
+        //         chatId: message.chatId,
+        //         title: result.trim()
+        //       });
+        //     }
+        //   }
+        //   return;
+        // }
+
+        case 'pinChat': {
+          const chat = chats.find(c => c.id === message.chatId);
+          if (chat) {
+            chat.isPinned = !chat.isPinned;
+
+            chats.sort((a, b) => {
+              if (a.isPinned && !b.isPinned) return -1;
+              if (!a.isPinned && b.isPinned) return 1;
+              return b.lastModified - a.lastModified;
+            });
+
+            webviewView.webview.postMessage({
+              type: 'chatPinned',
+              chatId: message.chatId,
+              isPinned: chat.isPinned
+            });
+          }
+          return;
+        }
+
         case 'saveApiKey': {
           try {
-
             if (!message.provider) {
               throw new Error('NO_PROVIDER_SELECTED');
             }
@@ -380,7 +623,8 @@ class AIAssistantViewProvider {
         }
 
         case 'removeApiKey': {
-          conversation = [];
+          chats = [];
+          currentChatId = null;
           await this.context.secrets.delete('LLMApiKey');
           webviewView.webview.postMessage({
             type: 'apiKeyRemoved'
@@ -416,8 +660,34 @@ class AIAssistantViewProvider {
           }
           return;
 
+        case 'requestClearConfirmation': {
+          const answer = await vscode.window.showWarningMessage(
+            'Clear all messages in this chat?',
+            { modal: true },
+            'Clear',
+            'Cancel'
+          );
+
+          if (answer === 'Clear') {
+            const chat = chats.find(c => c.id === message.chatId);
+            if (chat) {
+              chat.conversation = [];
+              chat.lastModified = Date.now();
+            }
+
+            webviewView.webview.postMessage({
+              type: 'chatCleared'
+            });
+          }
+          return;
+        }
+
         case 'clearChat': {
-          conversation = [];
+          const chat = chats.find(c => c.id === message.chatId);
+          if (chat) {
+            chat.conversation = [];
+            chat.lastModified = Date.now();
+          }
 
           webviewView.webview.postMessage({
             type: 'chatCleared'
@@ -426,7 +696,8 @@ class AIAssistantViewProvider {
         }
 
         case 'regenerateLast': {
-          if (conversation.length === 0) return;
+          const chat = getCurrentChat();
+          if (!chat || chat.conversation.length === 0) return;
 
           const apiKey = await this.context.secrets.get('LLMApiKey');
           if (!apiKey) return;
@@ -436,6 +707,7 @@ class AIAssistantViewProvider {
               webview: webviewView.webview,
               apiKey,
               tools,
+              chatId: currentChatId,
               isRegenerate: true
             });
           } catch (error) {
@@ -450,13 +722,16 @@ class AIAssistantViewProvider {
 
         case 'regenerateAt': {
           const index = message.conversationIndex;
+          const chat = chats.find(c => c.id === message.chatId);
 
-          if (typeof index !== 'number' || index < 0 || index >= conversation.length) {
+          if (!chat) return;
+
+          if (typeof index !== 'number' || index < 0 || index >= chat.conversation.length) {
             console.error('[regenerateAt] Invalid conversation index: ', index);
             return;
           }
 
-          const turn = conversation[index];
+          const turn = chat.conversation[index];
           if (!turn || turn.role !== 'assistant') {
             console.error('[regenerateAt] Turn at index is not an assistant: ', turn);
             return;
@@ -466,14 +741,14 @@ class AIAssistantViewProvider {
           if (!apiKey) return;
 
           const existingVersions = turn.versions;
-
-          conversation = conversation.slice(0, index);
+          chat.conversation = chat.conversation.slice(0, index);
 
           try {
             await generateAssistantResponse({
               webview: webviewView.webview,
               apiKey,
               tools,
+              chatId: message.chatId,
               isRegenerate: true,
               existingVersions: existingVersions
             });
@@ -499,12 +774,15 @@ class AIAssistantViewProvider {
         case 'switchVersion': {
           const index = message.conversationIndex;
           const versionIndex = message.versionIndex;
+          const chat = chats.find(c => c.id === message.chatId);
 
-          if (typeof index !== 'number' || index < 0 || index >= conversation.length) {
+          if (!chat) return;
+
+          if (typeof index !== 'number' || index < 0 || index >= chat.conversation.length) {
             return;
           }
 
-          const turn = conversation[index];
+          const turn = chat.conversation[index];
           if (!turn || turn.role !== 'assistant') {
             return;
           }
@@ -536,18 +814,36 @@ class AIAssistantViewProvider {
         return;
       }
 
-      const finalPrompt = message.text;
+      if (!currentChatId) {
+        const newChat = createNewChat();
+        webviewView.webview.postMessage({
+          type: 'chatCreated',
+          chat: {
+            id: newChat.id,
+            title: newChat.title,
+            preview: '',
+            createdAt: newChat.createdAt,
+            lastModified: newChat.lastModified,
+            isPinned: false,
+            messageCount: 0
+          }
+        });
+      }
 
+      const chat = getCurrentChat();
+      if (!chat) return;
+
+      const finalPrompt = message.text;
       const attachedFile = message.attachedFile || null;
 
       if (attachedFile && attachedFile.path) {
-        conversation.push({
+        chat.conversation.push({
           role: 'user',
           content: `User has attached a file at path: ${attachedFile.path}`
         });
       }
 
-      conversation.push({
+      chat.conversation.push({
         role: 'user',
         content: finalPrompt
       });
@@ -567,12 +863,9 @@ class AIAssistantViewProvider {
           webview: webviewView.webview,
           apiKey,
           tools,
+          chatId: currentChatId,
           isRegenerate: false
         });
-
-        if (conversation.length > 20) {
-          conversation = conversation.slice(-20);
-        }
       } catch (error) {
         if (
           error.message === 'GENERATION_ABORTED' ||
@@ -632,7 +925,7 @@ function activate(context) {
   console.log('AI Assistant sidebar activated');
 }
 
-function deactivate() { };
+function deactivate() { }
 
 module.exports = {
   activate,
