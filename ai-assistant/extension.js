@@ -26,6 +26,18 @@ STRICT RULES:
 5. If no meaningful fix is possible, DO NOT call apply_code_edits. Explain instead.
 6. Never replace the file with placeholders, summaries, or generic text.
 
+WORKSPACE RULES:
+- NEVER assume file or folder names
+- Use workspace tools to discover project structure
+- Do not reference file contents unless read via read_file
+- If multiple files match, ask the user to clarify
+- Workspace tools are read-only in this phase
+
+NAVIGATION RULES:
+- Opening files or folders must be explicit
+- Never open multiple files unless requested
+- Do not navigate during response generation unless necessary
+
 Violation of these rules is considered an error.
 `.trim();
 

@@ -57,7 +57,101 @@ const getAttachedFileFunction = {
     }
 };
 
-// Helper function to get tools in the format expected by providers
+const getCurrentFileInfoFunction = {
+    name: 'get_current_file_info',
+    description: 'Returns metadata about the currently active file, including name, path, language, and containing folder.',
+    parameters: {
+        type: 'object',
+        properties: {},
+        required: []
+    }
+};
+
+const listWorkspaceFilesFunction = {
+    name: 'list_workspace_files',
+    description: 'Lists all files in the current workspace. Can be recursive or top-level only.',
+    parameters: {
+        type: 'object',
+        properties: {
+            recursive: {
+                type: 'boolean',
+                description: 'Whether to list files recursively. Defaults to true.'
+            }
+        },
+        required: []
+    }
+};
+
+const listWorkspaceFoldersFunction = {
+    name: 'list_workspace_folders',
+    description: 'Lists top-level folders in the current workspace.',
+    parameters: {
+        type: 'object',
+        properties: {},
+        required: []
+    }
+};
+
+const searchWorkspaceFunction = {
+    name: 'search_workspace',
+    description: 'Searches for a text pattern across files in the current workspace.',
+    parameters: {
+        type: 'object',
+        properties: {
+            query: {
+                type: 'string',
+                description: 'Text pattern to search for in the workspace.'
+            }
+        },
+        required: ['query']
+    }
+};
+
+const readFileFunction = {
+    name: 'read_file',
+    description: 'Reads the full text content of a file within the workspace.',
+    parameters: {
+        type: 'object',
+        properties: {
+            path: {
+                type: 'string',
+                description: 'Workspace-relative or absolute path of the file to read.'
+            }
+        },
+        required: ['path']
+    }
+};
+
+const openFileFunction = {
+    name: 'open_file',
+    description: 'Opens a file in the VS Code editor.',
+    parameters: {
+        type: 'object',
+        properties: {
+            path: {
+                type: 'string',
+                description: 'Workspace-relative or absolute path of the file to open.'
+            }
+        },
+        required: ['path']
+    }
+};
+
+const openFolderFunction = {
+    name: 'open_folder',
+    description: 'Reveals a folder in the VS Code Explorer.',
+    parameters: {
+        type: 'object',
+        properties: {
+            path: {
+                type: 'string',
+                description: 'Workspace-relative or absolute path of the folder to reveal.'
+            }
+        },
+        required: ['path']
+    }
+};
+
 function getAllTools() {
     return [
         {
@@ -65,7 +159,14 @@ function getAllTools() {
                 getSelectedTextFunction,
                 getCurrentFileFunction,
                 applyEditorEditsFunction,
-                getAttachedFileFunction
+                getAttachedFileFunction,
+                getCurrentFileInfoFunction,
+                listWorkspaceFilesFunction,
+                listWorkspaceFoldersFunction,
+                searchWorkspaceFunction,
+                readFileFunction,
+                openFileFunction,
+                openFolderFunction
             ]
         }
     ];
@@ -76,5 +177,12 @@ module.exports = {
     getCurrentFileFunction,
     applyEditorEditsFunction,
     getAttachedFileFunction,
+    getCurrentFileInfoFunction,
+    listWorkspaceFilesFunction,
+    listWorkspaceFoldersFunction,
+    searchWorkspaceFunction,
+    readFileFunction,
+    openFileFunction,
+    openFolderFunction,
     getAllTools
 };

@@ -1,5 +1,6 @@
 const vscode = require('vscode');
 const fs = require('fs');
+const path = require('path');
 
 const activeDiffDisposables = [];
 
@@ -93,6 +94,20 @@ class ToolHandler {
                 return this.getCurrentFile(log);
             case 'get_attached_file':
                 return this.getAttachedFile(args, log);
+            case 'get_current_file_info':
+                return this.getCurrentFileInfo(log);
+            case 'list_workspace_files':
+                return this.listWorkspaceFiles(args, log);
+            case 'list_workspace_folders':
+                return this.listWorkspaceFolders(log);
+            case 'search_workspace':
+                return this.searchWorkspace(args, log);
+            case 'read_file':
+                return this.readFile(args, log);
+            case 'open_file':
+                return this.openFile(args, log);
+            case 'open_folder':
+                return this.openFolder(args, log);
             case 'apply_code_edits':
                 return this.applyCodeEdits(args, log);
             default:
@@ -131,6 +146,121 @@ class ToolHandler {
             log(`[TOOL] File read FAILED: ${error.message}`);
             return `Failed to read file at path: ${path}`;
         }
+    }
+
+    getCurrentFileInfo(log) {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            return '[NO_ACTIVE_FILE]';
+        }
+
+        const doc = editor.document;
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
+
+        return {
+            name: path.basename(doc.fileName),
+            path: doc.uri.fsPath,
+            language: doc.languageId,
+            directory: path.dirname(doc.uri.fsPath),
+            workspaceRoot: workspaceFolder ? workspaceFolder.uri.fsPath : null
+        };
+    }
+
+    async listWorkspaceFiles(args, log) {
+        const recursive = args?.recursive !== false;
+
+        const includePattern = recursive ? '**/*' : '*';
+        const excludePattern = '**/{node_modules,.git,dist,build,out}/**';
+
+        const files = await vscode.workspace.findFiles(
+            includePattern,
+            excludePattern
+        );
+
+        return files.map(uri => uri.fsPath);
+    }
+
+    async listWorkspaceFolders(log) {
+        const folders = vscode.workspace.workspaceFolders || [];
+        return folders.map(f => f.uri.fsPath);
+    }
+
+    async searchWorkspace(args, log) {
+        const { query } = args || {};
+        if (!query || typeof query !== 'string') {
+            throw new Error('NO_SEARCH_QUERY_PROVIDED');
+        }
+
+        const results = [];
+
+        const excludePattern = '**/{node_modules,.git,dist,build,out}/**';
+
+        await vscode.workspace.findTextInFiles(
+            { pattern: query },
+            { exclude: excludePattern },
+            result => {
+                results.push({
+                    path: result.uri.fsPath,
+                    line: result.ranges[0].start.line + 1,
+                    preview: result.preview.text.trim()
+                });
+            }
+        );
+
+        const MAX_RESULTS = 50;
+        return results.slice(0, MAX_RESULTS);
+    }
+
+    async readFile(args, log) {
+        const { path: filePath } = args;
+        if (!filePath) {
+            throw new Error('NO_FILE_PATH_PROVIDED');
+        }
+
+        const uri = vscode.Uri.file(filePath);
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+
+        if (!workspaceFolder) {
+            throw new Error('FILE_NOT_IN_WORKSPACE');
+        }
+
+        const content = await vscode.workspace.fs.readFile(uri);
+        return content.toString();
+    }
+
+    async openFile(args, log) {
+        const { path: filePath } = args;
+        if (!filePath) {
+            throw new Error('NO_FILE_PATH_PROVIDED');
+        }
+
+        const uri = vscode.Uri.file(filePath);
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+
+        if (!workspaceFolder) {
+            throw new Error('FILE_NOT_IN_WORKSPACE');
+        }
+
+        const doc = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(doc);
+        return 'FILE_OPENED';
+    }
+
+    async openFolder(args, log) {
+        const { path: folderPath } = args;
+        if (!folderPath) {
+            throw new Error('NO_FOLDER_PATH_PROVIDED');
+        }
+
+        const uri = vscode.Uri.file(folderPath);
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+
+        if (!workspaceFolder) {
+            throw new Error('FOLDER_NOT_IN_WORKSPACE');
+        }
+
+        await vscode.commands.executeCommand('revealInExplorer', uri);
+        return 'FOLDER_REVEALED';
     }
 
     async applyCodeEdits(args, log) {
