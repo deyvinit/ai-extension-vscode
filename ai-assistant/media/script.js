@@ -47,6 +47,11 @@ window.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    function clearButtonVisibility() {
+        const hasMessages = chat.children.length > 0;
+        clearBtn.style.display = hasMessages ? 'inline-block' : 'none';
+    }
+
     function createNewChat() {
         vscode.postMessage({ type: 'createNewChat' });
     }
@@ -231,6 +236,7 @@ window.addEventListener('DOMContentLoaded', () => {
         });
 
         chat.scrollTop = chat.scrollHeight;
+        clearButtonVisibility();
     }
 
     newChatBtn.addEventListener('click', createNewChat);
@@ -283,7 +289,6 @@ window.addEventListener('DOMContentLoaded', () => {
     });
 
     clearBtn.addEventListener('click', () => {
-        // Use VS Code's native confirmation dialog
         vscode.postMessage({
             type: 'requestClearConfirmation',
             chatId: currentChatId
@@ -491,6 +496,7 @@ window.addEventListener('DOMContentLoaded', () => {
         div.innerText = text;
         chat.appendChild(div);
         chat.scrollTop = chat.scrollHeight;
+        clearButtonVisibility();
     }
 
     window.addEventListener('message', (event) => {
@@ -507,6 +513,10 @@ window.addEventListener('DOMContentLoaded', () => {
                 chats.unshift(message.chat);
                 renderChatList(chats);
                 currentChatTitle.textContent = message.chat.title;
+                const existingMessages = chat.querySelectorAll('.message');
+                if (existingMessages.length === 0) {
+                    renderChat(message.conversation || []);
+                }
                 settingsOverlay.style.display = 'none';
                 break;
 
@@ -651,6 +661,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
             case 'chatCleared':
                 chat.innerHTML = '';
+                clearButtonVisibility();
                 currentAssistantBubble = null;
                 attachedFile = null;
                 attachedFileName.textContent = '';
@@ -700,4 +711,6 @@ window.addEventListener('DOMContentLoaded', () => {
                 break;
         }
     });
+
+    clearButtonVisibility();
 });

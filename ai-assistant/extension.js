@@ -73,6 +73,33 @@ function getChatList() {
   }));
 }
 
+async function saveChats(context) {
+  try {
+    await context.globalState.update('chatHistory', chats);
+    await context.globalState.update('currentChatId', currentChatId);
+    console.log('[STORAGE] Chats saved successfully');
+  } catch (error) {
+    console.error('[STORAGE] Failed to save chats:', error);
+  }
+}
+
+async function loadChats(context) {
+  try {
+    const savedChats = await context.globalState.get('chatHistory', []);
+    const savedCurrentChatId = await context.globalState.get('currentChatId', null);
+
+    if (savedChats && savedChats.length > 0) {
+      chats = savedChats;
+      currentChatId = savedCurrentChatId;
+      console.log(`[STORAGE] Loaded ${chats.length} chats from storage`);
+    } else {
+      console.log('[STORAGE] No saved chats found');
+    }
+  } catch (error) {
+    console.error('[STORAGE] Failed to load chats:', error);
+  }
+}
+
 function buildRequestContents(conversation) {
   return [
     {
@@ -290,7 +317,8 @@ async function generateAssistantResponse({
   tools,
   chatId,
   isRegenerate = false,
-  existingVersions = null
+  existingVersions = null,
+  context = null
 }) {
   const chat = chats.find(c => c.id === chatId);
   if (!chat) {
@@ -377,6 +405,10 @@ async function generateAssistantResponse({
       chat.title = firstUserMsg.substring(0, 40) + (firstUserMsg.length > 40 ? '...' : '');
     }
 
+    if (context) {
+      await saveChats(context);
+    }
+
     webview.postMessage({
       type: 'streamComplete',
       conversationIndex: conversationIndex,
@@ -395,12 +427,14 @@ class AIAssistantViewProvider {
     this.context = context;
   }
 
-  resolveWebviewView(webviewView) {
+  async resolveWebviewView(webviewView) {
     webviewView.webview.options = {
       enableScripts: true
     };
 
     webviewView.webview.html = getHtml(webviewView.webview, this.context);
+
+    await loadChats(this.context);
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
@@ -429,6 +463,7 @@ class AIAssistantViewProvider {
 
         case 'createNewChat': {
           const newChat = createNewChat();
+          await saveChats(this.context);
           webviewView.webview.postMessage({
             type: 'chatCreated',
             chat: {
@@ -439,7 +474,8 @@ class AIAssistantViewProvider {
               lastModified: newChat.lastModified,
               isPinned: false,
               messageCount: 0
-            }
+            },
+            conversation: newChat.conversation
           });
           return;
         }
@@ -448,6 +484,7 @@ class AIAssistantViewProvider {
           const chat = chats.find(c => c.id === message.chatId);
           if (chat) {
             currentChatId = message.chatId;
+            await saveChats(this.context);
             webviewView.webview.postMessage({
               type: 'chatSwitched',
               chatId: chat.id,
@@ -486,30 +523,21 @@ class AIAssistantViewProvider {
           const answer = await vscode.window.showWarningMessage(
             'Are you sure you want to delete this chat?',
             { modal: true },
-            'Delete',
-            'Cancel'
+            { title: 'Delete', isCloseAffordance: false },
+            { title: 'Cancel', isCloseAffordance: true }
           );
 
-          if (answer === 'Delete') {
+          if (answer && answer.title === 'Delete') {
             chats = chats.filter(c => c.id !== message.chatId);
+            await saveChats(this.context);
             webviewView.webview.postMessage({
               type: 'chatDeleted',
               chatId: message.chatId
             });
 
             if (currentChatId === message.chatId) {
-              if (chats.length > 0) {
-                const nextChat = chats[0];
-                currentChatId = nextChat.id;
-                webviewView.webview.postMessage({
-                  type: 'chatSwitched',
-                  chatId: nextChat.id,
-                  title: nextChat.title,
-                  conversation: nextChat.conversation
-                });
-              } else {
-                currentChatId = null;
-              }
+              currentChatId = null;
+              await saveChats(this.context);
             }
           }
           return;
@@ -520,6 +548,7 @@ class AIAssistantViewProvider {
           if (chat) {
             chat.title = message.title;
             chat.lastModified = Date.now();
+            await saveChats(this.context);
             webviewView.webview.postMessage({
               type: 'chatRenamed',
               chatId: message.chatId,
@@ -561,6 +590,8 @@ class AIAssistantViewProvider {
               if (!a.isPinned && b.isPinned) return 1;
               return b.lastModified - a.lastModified;
             });
+
+            await saveChats(this.context);
 
             webviewView.webview.postMessage({
               type: 'chatPinned',
@@ -664,16 +695,18 @@ class AIAssistantViewProvider {
           const answer = await vscode.window.showWarningMessage(
             'Clear all messages in this chat?',
             { modal: true },
-            'Clear',
-            'Cancel'
+            { title: 'Clear', isCloseAffordance: false },
+            { title: 'Cancel', isCloseAffordance: true }
           );
 
-          if (answer === 'Clear') {
+          if (answer && answer.title === 'Clear') {
             const chat = chats.find(c => c.id === message.chatId);
             if (chat) {
               chat.conversation = [];
               chat.lastModified = Date.now();
             }
+
+            await saveChats(this.context);
 
             webviewView.webview.postMessage({
               type: 'chatCleared'
@@ -708,7 +741,8 @@ class AIAssistantViewProvider {
               apiKey,
               tools,
               chatId: currentChatId,
-              isRegenerate: true
+              isRegenerate: true,
+              context: this.context
             });
           } catch (error) {
             webviewView.webview.postMessage({
@@ -750,7 +784,8 @@ class AIAssistantViewProvider {
               tools,
               chatId: message.chatId,
               isRegenerate: true,
-              existingVersions: existingVersions
+              existingVersions: existingVersions,
+              context: this.context
             });
           } catch (error) {
             if (
@@ -826,7 +861,8 @@ class AIAssistantViewProvider {
             lastModified: newChat.lastModified,
             isPinned: false,
             messageCount: 0
-          }
+          },
+          conversation: newChat.conversation
         });
       }
 
@@ -864,7 +900,8 @@ class AIAssistantViewProvider {
           apiKey,
           tools,
           chatId: currentChatId,
-          isRegenerate: false
+          isRegenerate: false,
+          context: this.context
         });
       } catch (error) {
         if (
