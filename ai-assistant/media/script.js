@@ -7,6 +7,7 @@ let attachedFile = null;
 
 window.addEventListener('DOMContentLoaded', () => {
     const chat = document.getElementById('chat');
+    const chatContainer = document.getElementById('chat-container');
     const sendBtn = document.getElementById('send');
     const stopBtn = document.getElementById('stop');
     const clearBtn = document.getElementById('clear-chat');
@@ -235,7 +236,7 @@ window.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        chat.scrollTop = chat.scrollHeight;
+        chatContainer.scrollTop = chatContainer.scrollHeight;
         clearButtonVisibility();
     }
 
@@ -495,7 +496,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
         div.innerText = text;
         chat.appendChild(div);
-        chat.scrollTop = chat.scrollHeight;
+        chatContainer.scrollTop = chatContainer.scrollHeight;
         clearButtonVisibility();
     }
 
@@ -514,9 +515,15 @@ window.addEventListener('DOMContentLoaded', () => {
                 renderChatList(chats);
                 currentChatTitle.textContent = message.chat.title;
                 const existingMessages = chat.querySelectorAll('.message');
-                if (existingMessages.length === 0) {
+                if (message.isManualCreation) {
                     renderChat(message.conversation || []);
+                } else {
+                    const existingMessages = chat.querySelectorAll('.message');
+                    if (existingMessages.length === 0) {
+                        renderChat(message.conversation || []);
+                    }
                 }
+
                 settingsOverlay.style.display = 'none';
                 break;
 
@@ -579,7 +586,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 currentAssistantBubble.dataset.rawText += message.text;
                 currentAssistantBubble.textContent = currentAssistantBubble.dataset.rawText;
                 currentAssistantBubble.style.whiteSpace = 'pre-wrap';
-                chat.scrollTop = chat.scrollHeight;
+                chatContainer.scrollTop = chatContainer.scrollHeight;
                 break;
 
             case 'streamComplete':
@@ -606,6 +613,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
                     enhanceCodeBlocks(currentAssistantBubble);
                     addMessageControls(currentAssistantBubble);
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
                 }
 
                 currentAssistantBubble = null;

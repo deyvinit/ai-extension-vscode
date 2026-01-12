@@ -487,7 +487,8 @@ class AIAssistantViewProvider {
               isPinned: false,
               messageCount: 0
             },
-            conversation: newChat.conversation
+            conversation: newChat.conversation,
+            isManualCreation: true
           });
           return;
         }
