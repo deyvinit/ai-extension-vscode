@@ -48,6 +48,12 @@ window.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    function setIdleState() {
+        sendBtn.disabled = false;
+        stopBtn.style.display = 'none';
+        currentAssistantBubble = null;
+    }
+
     function clearButtonVisibility() {
         const hasMessages = chat.children.length > 0;
         clearBtn.style.display = hasMessages ? 'inline-block' : 'none';
@@ -507,6 +513,7 @@ window.addEventListener('DOMContentLoaded', () => {
             case 'chatsLoaded':
                 chats = message.chats;
                 renderChatList(chats);
+                setIdleState();
                 break;
 
             case 'chatCreated':
@@ -514,7 +521,7 @@ window.addEventListener('DOMContentLoaded', () => {
                 chats.unshift(message.chat);
                 renderChatList(chats);
                 currentChatTitle.textContent = message.chat.title;
-                const existingMessages = chat.querySelectorAll('.message');
+                // const existingMessages = chat.querySelectorAll('.message');
                 if (message.isManualCreation) {
                     renderChat(message.conversation || []);
                 } else {
@@ -524,6 +531,7 @@ window.addEventListener('DOMContentLoaded', () => {
                     }
                 }
 
+                setIdleState();
                 settingsOverlay.style.display = 'none';
                 break;
 
@@ -532,8 +540,17 @@ window.addEventListener('DOMContentLoaded', () => {
                 currentChatTitle.textContent = message.title;
                 renderChat(message.conversation);
                 renderChatList(chats);
+                setIdleState();
                 settingsOverlay.style.display = 'none';
                 break;
+
+            case 'chatRestored': {
+                currentChatId = message.chatId;
+                currentChatTitle.textContent = message.title;
+                renderChat(message.conversation);
+                setIdleState();
+                break;
+            }
 
             case 'chatDeleted':
                 chats = chats.filter(c => c.id !== message.chatId);

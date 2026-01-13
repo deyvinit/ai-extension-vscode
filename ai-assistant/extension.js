@@ -440,13 +440,36 @@ class AIAssistantViewProvider {
   }
 
   async resolveWebviewView(webviewView) {
+    console.log('[RESOLVE] resolveWebviewView called. chats.length: ', chats.length, 'currentChatId: ', currentChatId);
+    this._view = webviewView;
+
     webviewView.webview.options = {
-      enableScripts: true
+      enableScripts: true,
+      retainContextWhenHidden: true
     };
 
     webviewView.webview.html = getHtml(webviewView.webview, this.context);
 
     await loadChats(this.context);
+
+    console.log('[RESOLVE] After loadChats. chats.length:', chats.length, 'currentChatId:', currentChatId);
+
+    webviewView.webview.postMessage({
+      type: 'chatsLoaded',
+      chats: getChatList()
+    });
+
+    if (currentChatId) {
+      const chat = chats.find(c => c.id === currentChatId);
+      if (chat) {
+        webviewView.webview.postMessage({
+          type: 'chatRestored',
+          chatId: chat.id,
+          title: chat.title,
+          conversation: chat.conversation
+        });
+      }
+    }
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
@@ -470,6 +493,19 @@ class AIAssistantViewProvider {
             type: 'chatsLoaded',
             chats: getChatList()
           });
+
+          if (currentChatId) {
+            const chat = chats.find(c => c.id === currentChatId);
+            if (chat) {
+              webviewView.webview.postMessage({
+                type: 'chatRestored',
+                chatId: chat.id,
+                title: chat.title,
+                conversation: chat.conversation
+              });
+            }
+          }
+
           return;
         }
 
@@ -863,20 +899,30 @@ class AIAssistantViewProvider {
       }
 
       if (!currentChatId) {
-        const newChat = createNewChat();
-        webviewView.webview.postMessage({
-          type: 'chatCreated',
-          chat: {
-            id: newChat.id,
-            title: newChat.title,
-            preview: '',
-            createdAt: newChat.createdAt,
-            lastModified: newChat.lastModified,
-            isPinned: false,
-            messageCount: 0
-          },
-          conversation: newChat.conversation
-        });
+        if (chats.length === 0) {
+
+          const newChat = createNewChat();
+          await saveChats(this.context);
+          webviewView.webview.postMessage({
+            type: 'chatCreated',
+            chat: {
+              id: newChat.id,
+              title: newChat.title,
+              preview: '',
+              createdAt: newChat.createdAt,
+              lastModified: newChat.lastModified,
+              isPinned: false,
+              messageCount: 0
+            },
+            conversation: newChat.conversation
+          });
+        } else {
+          webviewView.webview.postMessage({
+            type: 'assistantResponse',
+            text: 'Please select or create a chat to continue.'
+          });
+          return;
+        }
       }
 
       const chat = getCurrentChat();

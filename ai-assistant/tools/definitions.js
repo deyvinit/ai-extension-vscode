@@ -67,6 +67,16 @@ const getCurrentFileInfoFunction = {
     }
 };
 
+const listOpenFilesFunction = {
+    name: 'list_open_files',
+    description: 'Lists all currently open files across all editor tabs and groups.',
+    parameters: {
+        type: 'object',
+        properties: {},
+        required: []
+    }
+};
+
 const listWorkspaceFilesFunction = {
     name: 'list_workspace_files',
     description: 'Lists all files in the current workspace. Can be recursive or top-level only.',
@@ -128,12 +138,13 @@ const openFileFunction = {
     parameters: {
         type: 'object',
         properties: {
-            path: {
-                type: 'string',
-                description: 'Workspace-relative or absolute path of the file to open.'
+            paths: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'One or more workspace-relative or absolute file paths to open.'
             }
         },
-        required: ['path']
+        required: []
     }
 };
 
@@ -152,6 +163,22 @@ const openFolderFunction = {
     }
 };
 
+const closeFileFunction = {
+    name: 'close_file',
+    description: 'Closes an open file. If no path is provided, closes the currently active file. If the file has unsaved changes, VS Code will prompt the user to save, discard, or cancel.',
+    parameters: {
+        type: 'object',
+        properties: {
+            paths: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Optional list of open file names or paths to close. If omitted, closes the active file.'
+            }
+        },
+        required: []
+    }
+};
+
 function getAllTools() {
     return [
         {
@@ -161,12 +188,14 @@ function getAllTools() {
                 applyEditorEditsFunction,
                 getAttachedFileFunction,
                 getCurrentFileInfoFunction,
+                listOpenFilesFunction,
                 listWorkspaceFilesFunction,
                 listWorkspaceFoldersFunction,
                 searchWorkspaceFunction,
                 readFileFunction,
                 openFileFunction,
-                openFolderFunction
+                openFolderFunction,
+                closeFileFunction
             ]
         }
     ];
@@ -178,11 +207,13 @@ module.exports = {
     applyEditorEditsFunction,
     getAttachedFileFunction,
     getCurrentFileInfoFunction,
+    listOpenFilesFunction,
     listWorkspaceFilesFunction,
     listWorkspaceFoldersFunction,
     searchWorkspaceFunction,
     readFileFunction,
     openFileFunction,
     openFolderFunction,
+    closeFileFunction,
     getAllTools
 };
